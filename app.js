@@ -10,7 +10,9 @@ const socialRoutes = require('./routes/socialRoutes');
 const ideaRoutes = require('./routes/ideaRoutes');
 const groupRoutes = require('./routes/groupRoutes');
 
+
 const app = express();
+
 
 // 1. Global Middleware
 app.use(helmet()); // Secure HTTP headers
@@ -41,6 +43,30 @@ app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ success: false, message: 'Internal Server Error' });
 });
+// app.js
+const BASE_PATH = '/project1/api/v1'; // IMPORTANT: Matches Kotlin @POST("project1/...")
+
+app.use(`${BASE_PATH}/auth`, require('./routes/authRoutes'));
+
+
+//line 52-other routes ->update kiya hai
+const BASE_URL = '/project1/api/v1';
+// Profile Routes (Handles /project1/api/v1/profile/...)
+app.use(`${BASE_URL}`/profile, require('./routes/profileRoutes'));
+
+// --- FIX FOR SUGGESTIONS (Routing them to specific controller functions) ---
+const profileController = require('./controllers/profileController');
+const { protect } = require('./middleware/authMiddleware');
+
+// Manually define these "root level" routes from the Kotlin spec
+app.get(`${BASE_URL}`/skills/suggestions, protect, profileController.getSkillSuggestions);
+app.get(`${BASE_URL}`/colleges/suggestions, protect, profileController.getCollegeSuggestions);
+app.get(`${BASE_URL}`/interests/suggestions, protect, profileController.getInterestSuggestions);
+
+// ... other routes (auth, groups, etc.)
+// ... other routes
+
+
 
 module.exports = app;
 
