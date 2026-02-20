@@ -41,8 +41,7 @@ const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/profileController');
 const { protect } = require('../middleware/authMiddleware');
-const multer = require('multer');
-const upload = multer({ dest: 'uploads/' });
+const upload = require('../middleware/upload');
 
 router.use(protect); // All routes require login
 
@@ -75,7 +74,14 @@ router.delete('/remove-interest', controller.removeInterest);
 // See Step 3 for how we handle the URL path mismatch.
 
 // 7. Profile Picture
-router.post('/update-profile-picture', upload.single('file'), controller.updateProfilePicture);
+router.post(
+  '/update-profile-picture',
+  upload.single('file'),   // match Android
+  controller.updateProfilePicture
+);
+
+
+
 
 // 8. Views
 router.get('/user-projects', controller.getUserProjects);

@@ -307,28 +307,98 @@
 // };
 const Group = require('../models/Group');
 const User = require('../models/User');
+const Community = require('../models/Community');
+const ChatRoom = require('../models/ChatRoom');
+const GroupMember = require('../models/GroupMember');
+const mongoose = require("mongoose");
+
+
 
 // Helper to determine User Role
 const getUserRole = (group, userId) => {
   if (group.owner_id.toString() === userId) return "owner";
   if (group.admins.includes(userId)) return "admin";
-  if (group.members.includes(userId)) return "member";
+  if (group.members.some(id => id.toString() === userId)) return "member";
   return "visitor";
 };
 
 // 1. CREATE GROUP (Manual)
 exports.createGroup = async (req, res) => {
   try {
-    const { name, description, visibility } = req.body;
-    const newGroup = await Group.create({
-      name, description, visibility,
-      owner_id: req.user.id,
-      members: [req.user.id],
-      admins: [req.user.id]
+    const { name, description, visibility, members = [] } = req.body;
+
+    const uniqueMembers = [
+      req.user.id,
+      ...members.filter(id => id !== req.user.id)
+    ];
+
+          // 1️⃣ CREATE GROUP
+      const group = await Group.create({
+        name,
+        description,
+        visibility,
+        owner_id: req.user.id,
+        members: uniqueMembers,
+        admins: [req.user.id]
+      });
+
+      await GroupMember.create({
+  groupId: group._id,
+  userId: req.user.id,
+  role: "owner",
+  permissions: {
+    canCreateProject: true,
+    canCreatePost: true,
+    canDeletePost: true,
+    canInviteMembers: true,
+    canRemoveMembers: true,
+    canHireMembers: true
+  }
+});
+
+      // 2️⃣ CREATE COMMUNITY
+      const community = await Community.create({
+        name,
+        createdBy: req.user.id,
+        members: uniqueMembers,
+        groupId: group._id
+      });
+
+      // 3️⃣ LINK COMMUNITY TO GROUP
+      group.communityId = community._id;
+      await group.save();
+
+      // 4️⃣ ✅ CREATE DEFAULT "GENERAL" CHAT ROOM  (🔥 IMPORTANT)
+            await ChatRoom.create({
+        name: "General",
+        communityId: community._id,
+        groupId: group._id,      // 🔥 THIS WAS MISSING
+        type: "GROUP",
+        createdBy: req.user.id
+      });
+
+
+      // 5️⃣ SEND RESPONSE (LAST STEP)
+      res.status(201).json({
+        success: true,
+        group_id: group._id,
+        community_id: community._id,
+        role: "owner"
+      });
+
+
+
+  } catch (err) {
+    console.error("CREATE GROUP ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
     });
-    res.status(200).json({ success: true, group_id: newGroup._id, role: "owner" });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+  }
 };
+
+
+
 
 // 2. CREATE GROUP FROM IDEA
 exports.createGroupFromIdea = async (req, res) => {
@@ -354,6 +424,8 @@ exports.getGroupDetailsZip = async (req, res) => {
     const userId = req.user.id;
     const role = getUserRole(group, userId);
 
+       
+
     const response = {
       success: true,
       user_context: {
@@ -367,15 +439,17 @@ exports.getGroupDetailsZip = async (req, res) => {
         }
       },
       group_details: {
-        group_id: group._id,
-        name: group.name,
-        description: group.description,
-        visibility: group.visibility,
-        owner_id: group.owner_id,
-        profile_image: group.profile_image,
-        banner_image: group.banner_image,
-        created_at: group.created_at
-      },
+          group_id: group._id,
+            community_id: group.communityId,
+          name: group.name,
+          description: group.description,
+          visibility: group.visibility,
+          owner_id: group.owner_id,
+          profile_image: group.profile_image,
+          banner_image: group.banner_image,
+          created_at: group.created_at
+        }
+,
       group_project_details: {
         project_status: group.project_status,
         current_stage: group.current_stage,
@@ -418,28 +492,44 @@ exports.getGroupOverview = async (req, res) => {
 exports.getMyGroupAccess = async (req, res) => {
   try {
     const group = await Group.findById(req.params.group_id);
+
+    // ✅ ADD IT HERE
+    if (!group) {
+      return res.status(404).json({ message: "Group not found" });
+    }
+
     const userId = req.user.id;
-    const isMember = group.members.includes(userId);
-    
+
+    const isMember = group.members.some(
+      id => id.toString() === userId
+    );
+
     let role = "visitor";
-    if (group.owner_id.toString() === userId) role = "owner";
-    else if (group.admins.includes(userId)) role = "admin";
-    else if (isMember) role = "member";
+    if (group.owner_id.toString() === userId) {
+      role = "owner";
+    } else if (group.admins.some(id => id.toString() === userId)) {
+      role = "admin";
+    } else if (isMember) {
+      role = "member";
+    }
 
     res.status(200).json({
-      isMember: isMember,
+      isMember,
       isFollower: false,
       isConnected: false,
-      role: role,
+      role,
       permissions: {
         can_post: isMember,
-        can_manage_members: role === 'owner' || role === 'admin',
-        can_edit_group: role === 'owner' || role === 'admin',
-        can_delete_group: role === 'owner',
-        canEditPermissions: role === 'owner'
+        can_manage_members: role === "owner" || role === "admin",
+        can_edit_group: role === "owner" || role === "admin",
+        can_delete_group: role === "owner",
+        canEditPermissions: role === "owner"
       }
     });
-  } catch (err) { res.status(500).json({ message: err.message }); }
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 // 6. UPDATE GROUP NAME
@@ -462,48 +552,110 @@ exports.updateGroupDescription = async (req, res) => {
 
 // 8. UPDATE PROFILE IMAGE
 exports.updateGroupProfileImage = async (req, res) => {
-  if (!req.file) return res.status(400).json({ message: "No file" });
-  const url = `https://mock-cdn.com/${req.file.filename}`;
-  await Group.findByIdAndUpdate(req.params.group_id, { profile_image: url });
-  res.status(200).json({ url: url });
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const imageUrl = req.file.path; // ✅ Cloudinary URL
+
+    await Group.findByIdAndUpdate(req.params.group_id, {
+      profile_image: imageUrl
+    });
+
+    res.status(200).json({ url: imageUrl });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
+
 
 // 9. UPDATE BANNER
 exports.updateGroupBanner = async (req, res) => {
-  if (!req.file) return res.status(400).json({ message: "No file" });
-  const url = `https://mock-cdn.com/${req.file.filename}`;
-  await Group.findByIdAndUpdate(req.params.group_id, { banner_image: url });
-  res.status(200).json({ url: url });
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const imageUrl = req.file.path; // ✅ Cloudinary URL
+
+    await Group.findByIdAndUpdate(req.params.group_id, {
+      banner_image: imageUrl
+    });
+
+    res.status(200).json({ url: imageUrl });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
+
 
 // 10. GET MY GROUPS (ZIP for Home Screen)
 exports.getMyGroupsZip = async (req, res) => {
   try {
-    const groups = await Group.find({ members: req.user.id });
+
+    const groups = await Group.find({
+      members: req.user.id
+    })
+    .select("_id name profile_image members admins owner_id last_activity_at")
+    .lean(); // 🔥 performance optimization
+
     const list = groups.map(g => ({
       group_id: g._id,
       name: g.name,
+      profileImage: g.profile_image || null,  // ✅ NOW INCLUDED
       role: getUserRole(g, req.user.id),
       members_count: g.members.length,
       last_activity_at: g.last_activity_at
     }));
-    res.status(200).json({ success: true, groups: list });
-  } catch (err) { res.status(500).json({ message: err.message }); }
+
+    res.status(200).json({
+      success: true,
+      groups: list
+    });
+
+  } catch (err) {
+    console.error("getMyGroupsZip error:", err);
+    res.status(500).json({ message: err.message });
+  }
 };
 
 // 11. GET GROUP MEMBERS
 exports.getGroupMembers = async (req, res) => {
   try {
-    const group = await Group.findById(req.params.group_id).populate('members', 'name');
-    const membersList = group.members.map(m => ({
-      user_id: m._id,
-      name: m.name,
-      role: m._id.toString() === group.owner_id.toString() ? "owner" : "member",
+    const group = await Group
+      .findById(req.params.group_id)
+      .populate({
+        path: 'members',
+        select: 'name profilePic' // ✅ INCLUDE profilePic
+      });
+
+    if (!group) {
+      return res.status(404).json({ message: "Group not found" });
+    }
+
+    const membersList = group.members.map(user => ({
+      user_id: user._id,
+      name: user.name,
+      profileImage: user.profilePic || null, // ✅ SEND IMAGE
+      role: user._id.toString() === group.owner_id.toString()
+        ? "owner"
+        : "member",
       joined_at: new Date()
     }));
-    res.status(200).json({ success: true, members: membersList });
-  } catch (err) { res.status(500).json({ message: err.message }); }
+
+    res.status(200).json({
+      success: true,
+      members: membersList
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
+
 
 // 12. UPDATE MEMBER ROLE
 exports.updateMemberRole = async (req, res) => {
@@ -551,3 +703,99 @@ exports.getGroupProjects = async (req, res) => {
     });
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
+
+// ✅ ADD MEMBERS TO GROUP
+exports.addMembersToGroup = async (req, res) => {
+  try {
+    const { group_id } = req.params;
+    const { members } = req.body;
+
+    if (!Array.isArray(members) || members.length === 0) {
+      return res.status(400).json({ message: "No members provided" });
+    }
+
+    const group = await Group.findById(group_id);
+    if (!group) {
+      return res.status(404).json({ message: "Group not found" });
+    }
+
+    for (const userId of members) {
+
+      // 1️⃣ Add to Group model (if not already)
+      if (!group.members.some(id => id.toString() === userId)) {
+        group.members.push(userId);
+      }
+
+      // 2️⃣ 🔥 IMPORTANT: Add to GroupMember collection
+      await GroupMember.create({
+        groupId: group._id,
+        userId: userId,
+        role: "member",
+        permissions: {
+          canCreateProject: false,
+          canCreatePost: true,
+          canDeletePost: false,
+          canInviteMembers: false,
+          canRemoveMembers: false,
+          canHireMembers: false
+        }
+      });
+    }
+
+    await group.save();
+
+    res.status(200).json({
+      success: true,
+      added_members: members.length
+    });
+
+  } catch (err) {
+    console.error("Add member error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+
+
+
+
+
+
+
+exports.getMyPostGroups = async (req, res) => {
+  try {
+    const userId = new mongoose.Types.ObjectId(req.user.id);
+
+    const memberships = await GroupMember.find({
+      userId: userId
+    });
+
+    console.log("Memberships:", memberships);
+
+    const groupIds = memberships.map(m => m.groupId);
+
+    const groups = await Group.find({
+  _id: { $in: groupIds }
+}).select("_id name profile_image");
+
+const formattedGroups = groups.map(g => ({
+  group_id: g._id,
+  name: g.name,
+  profileImage: g.profile_image || null
+}));
+
+res.status(200).json({
+  success: true,
+  groups: formattedGroups
+});
+
+  } catch (error) {
+    console.error("getMyPostGroups error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch groups"
+    });
+  }
+};
+
+

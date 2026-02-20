@@ -17,3 +17,12 @@ process.on('unhandledRejection', (err, promise) => {
   // Close server & exit process
   server.close(() => process.exit(1));
 });
+const authMiddleware = (req, res, next) => {
+  console.log("AUTH HEADER:", req.headers.authorization);
+
+  if (!req.headers.authorization) {
+    return res.status(401).json({ message: "No auth header" });
+  }
+
+  next();
+};

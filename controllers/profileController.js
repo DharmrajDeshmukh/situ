@@ -294,10 +294,16 @@
 //   } catch (err) { res.status(500).json({ message: err.message }); }
 // };
 
-
 const User = require('../models/User');
-// const Project = require('../models/Project'); // Uncomment if you have Project model
-// const Post = require('../models/Post');       // Uncomment if you have Post model
+const Group = require('../models/Group');
+const ConnectionRequest = require('../models/ConnectionRequest');
+const ProjectMember = require("../models/ProjectMember");
+const Project = require("../models/Project");
+const GroupMember = require("../models/GroupMember");
+const Post = require("../models/Post"); // if you have
+
+
+
 
 // Helper: Get Mock Counts (Replace with real DB counts in prod)
 const getStats = async (userId) => {
@@ -312,57 +318,204 @@ const getStats = async (userId) => {
   };
 };
 
+
 // 1. Edit Full Profile (Authoritative)
 // Matches: @PUT("/project1/api/v1/profile/edit")
 exports.editProfile = async (req, res) => {
   try {
-    const updates = req.body; // name, username, bio, college, skills, interests
-    
-    // Basic validation or transformation could go here
-    const user = await User.findByIdAndUpdate(req.user.id, updates, { new: true });
+    const userId = req.user.id;
 
-    res.status(200).json({
-      success: true,
-      message: "Profile updated",
-      updated_fields: Object.keys(updates)
+    const updates = {};
+
+    if (req.body.name !== undefined)
+      updates.name = req.body.name;
+
+    if (req.body.username !== undefined)
+      updates.username = req.body.username;
+
+    if (req.body.bio !== undefined)
+      updates.bio = req.body.bio;
+
+    if (req.body.college !== undefined)
+      updates.college = req.body.college;
+
+    if (req.body.skills !== undefined)
+      updates.skills = req.body.skills;
+
+    if (req.body.interests !== undefined)
+      updates.interests = req.body.interests;
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No fields to update"
+      });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $set: updates },
+      { new: true }
+    );
+
+  const {
+  _id,
+  name,
+
+  bio,
+  profilePic,
+  skills,
+  interests
+} = updatedUser;
+
+return res.json({
+  success: true,
+  message: "Profile updated successfully",
+  user: {
+    id: _id,
+    name,
+   
+    bio,
+    profilePic: profilePic || null,
+    skills,
+    interests
+  }
+});
+;
+
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: err.message
     });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+  }
 };
+
+
+
+
 
 // 2. Get My Profile (Editable Data)
 // Matches: @GET("/project1/api/v1/profile/me")
 exports.getMyProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    const userId = req.user.id;
 
-    const stats = await getStats(user._id);
+    const user = await User.findById(userId).lean();
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
 
-    // Matches MyProfileResponse
+    /* ================= GROUPS ================= */
+
+    const groupMemberships = await GroupMember.find({
+      userId: userId
+    }).populate("groupId");
+
+    const groups = groupMemberships
+      .filter(m => m.groupId)
+      .map(m => ({
+        group_id: m.groupId._id,
+        name: m.groupId.name,
+        profilePic: m.groupId.profileImage || null
+      }));
+
+    /* ================= PROJECTS ================= */
+
+    const projectMemberships = await ProjectMember.find({
+      user_id: userId,
+      status: "ACCEPTED",
+      is_removed: false
+    }).populate("project_id");
+
+    const allProjects = projectMemberships
+      .filter(m => m.project_id && !m.project_id.is_deleted)
+      .map(m => ({
+        project_id: m.project_id._id,
+        title: m.project_id.title,
+        bannerUrl: m.project_id.banner_url,
+        role: m.role,
+        group_id: m.project_id.group_id || null
+      }));
+
+    const standaloneProjects = allProjects.filter(p => !p.group_id);
+
+ /* ================= POSTS ================= */
+
+const standalonePosts = await Post.find({
+  user_id: userId,
+  group_id: null,
+  project_id: null,
+  is_deleted: false
+})
+.sort({ createdAt: -1 })
+.select("_id text media createdAt")
+.lean();
+
+const posts = standalonePosts.map(p => ({
+  post_id: p._id,
+  text: p.text,
+  media: p.media,
+  createdAt: p.createdAt
+}));
+
+
+    /* ================= COUNTS ================= */
+
+    const followersCount = user.followers ? user.followers.length : 0;
+    const connectionsCount = user.connections ? user.connections.length : 0;
+    const projectsCount = allProjects.length;
+
+    /* ================= RESPONSE ================= */
+
     res.status(200).json({
       success: true,
       id: user._id,
       name: user.name,
-      username: user.username,
-      email: user.email,
-      phone: user.phone,
       bio: user.bio,
-      college: user.college,
-      profilePic: user.profilePic,
-      createdAt: user.createdAt,
+      profilePic: user.profilePic || null,
       skills: user.skills || [],
-      interests: user.interests || [],
-      
-      // Stats
-      ...stats,
-      
-      // Lists (Mocked for now, populate from real DB collections if needed)
-      groups: [],
-      ideas: [],
-      my_posts: []
+
+      stats: {
+        no_of_followers: followersCount,
+        no_of_connections: connectionsCount,
+        no_of_projects: projectsCount
+      },
+
+      groups: {
+        count: groups.length,
+        list: groups
+      },
+
+      projects: {
+        count: allProjects.length,
+        list: allProjects
+      },
+
+      standalone_projects: {
+        count: standaloneProjects.length,
+        list: standaloneProjects
+      },
+
+      standalone_posts: {
+        count: posts.length,
+        list: posts
+      }
     });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+
+  } catch (err) {
+    console.error("Profile error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 };
+
+
 
 // 3. Update Name
 // Matches: @PUT("/project1/api/v1/profile/update-name")
@@ -503,20 +656,44 @@ exports.getInterestSuggestions = (req, res) => {
 // Matches: @POST("/project1/api/v1/profile/update-profile-picture")
 exports.updateProfilePicture = async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ success: false, message: "No file" });
-    
-    // In prod: Upload to S3/Cloudinary. Here: Local URL.
-    const url = `https://your-backend.com/uploads/${req.file.filename}`;
-    
-    await User.findByIdAndUpdate(req.user.id, { profilePic: url });
-    
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No file uploaded"
+      });
+    }
+
+    // ✅ Cloudinary returns full hosted URL here
+    const imageUrl = req.file.path;
+
+    // Optional: Get previous image (for future deletion logic)
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // Update profile picture
+    user.profilePic = imageUrl;
+    await user.save();
+
     res.status(200).json({
       success: true,
-      profilePic_url: url,
+      profilePic_url: imageUrl,
       updatedAt: new Date()
     });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+
+  } catch (err) {
+    console.error("PROFILE PIC UPDATE ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 };
+
 
 // 12. Get User Projects
 // Matches: @GET("/project1/api/v1/profile/user-projects")
@@ -545,17 +722,74 @@ exports.getUserProjects = async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 };
 
+
 // 13. Get Any User Profile (Read Only)
 // Matches: @GET("/project1/api/v1/profile/view/{userId}")
 exports.getUserProfileView = async (req, res) => {
   try {
-    const user = await User.findById(req.params.userId);
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    const viewerId = req.user.id;          // 👈 logged-in user
+    const targetUserId = req.params.userId;
 
-    // Mock Public Profile Response
+    const user = await User.findById(targetUserId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // ================= CONNECTION STATUS =================
+    let connectionStatus = "NOT_CONNECTED";
+
+    const connection = await ConnectionRequest.findOne({
+      target_type: "USER",
+      $or: [
+        { sender_id: viewerId, receiver_id: targetUserId },
+        { sender_id: targetUserId, receiver_id: viewerId }
+      ]
+    });
+
+    if (connection) {
+      if (connection.status === "accepted") {
+        connectionStatus = "CONNECTED";
+      } else if (connection.status === "pending") {
+        if (connection.sender_id.toString() === viewerId) {
+          connectionStatus = "REQUEST_SENT";
+        } else {
+          connectionStatus = "REQUEST_RECEIVED";
+        }
+      }
+    }
+
+    // ================= GROUPS =================
+    const publicGroups = await Group.find({
+      visibility: "public",
+      members: { $in: [user._id] }
+    })
+      .select("name description profile_image visibility created_at")
+      .lean();
+
+    const formattedGroups = publicGroups.map(group => ({
+      group_id: group._id,
+      name: group.name,
+      description: group.description ?? "",
+      profile_image: group.profile_image ?? null,
+      visibility: group.visibility,
+      joined_at: group.created_at
+    }));
+
+    // ================= RESPONSE =================
     res.status(200).json({
       success: true,
-      permissions: { is_owner: false, can_edit: false, can_message: true },
+
+      connectionStatus, // ✅ THIS WAS MISSING
+
+      permissions: {
+        is_owner: false,
+        can_edit: false,
+        can_message: connectionStatus === "CONNECTED"
+      },
+
       profile: {
         user_id: user._id,
         name: user.name,
@@ -567,12 +801,33 @@ exports.getUserProfileView = async (req, res) => {
         interests: user.interests || [],
         joined_at: user.createdAt
       },
-      stats: { total_projects: 5, ongoing_projects: 2, completed_projects: 3 },
+
+      stats: {
+        total_projects: 5,
+        ongoing_projects: 2,
+        completed_projects: 3
+      },
+
+      groups: {
+        count: formattedGroups.length,
+        list: formattedGroups
+      },
+
       projects: { count: 0, list: [] },
       posts: { count: 0, list: [] }
     });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+
+  } catch (err) {
+    console.error("Profile view error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 };
+
+
+
 
 // 14. Open Profile (Auto Redirect)
 // Matches: @GET("/project1/api/v1/profile/open/{userId}")
@@ -595,3 +850,5 @@ exports.openUserProfile = async (req, res) => {
     });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 };
+
+

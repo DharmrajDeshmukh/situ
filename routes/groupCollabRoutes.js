@@ -1,20 +1,68 @@
 const express = require('express');
 const router = express.Router();
-const controller = require('../controllers/groupCollabController');
+
+const groupCollabController = require('../controllers/groupCollabController');
 const { protect } = require('../middleware/authMiddleware');
+const groupHiringController = require("../controllers/groupHiringController");
+
 
 router.use(protect);
 
-// Hiring
-router.post('/:groupId/hiring/requirements', controller.createOrUpdateHiringRequirement);
-router.post('/:groupId/hiring/close', controller.closeGroupHiring);
+/* ================= GROUP HIRING ================= */
 
-// Collab
-router.post('/collab/invite/send', controller.sendCollabInvite);
-router.post('/collab/request/send', controller.sendCollabRequest);
+router.put(
+  '/:groupId/hiring',
+  groupCollabController.createOrUpdateHiringRequirement
+);
 
-// Status
-router.post('/:groupId/collab/requests/pending', controller.getPendingCollabRequests);
-router.post('/:groupId/collab/my-request', controller.getMyCollabRequestStatus);
+router.get(
+  "/:groupId/hiring/status",
+  protect,
+  groupHiringController.getGroupHiringStatus
+);
+
+router.post(
+  '/:groupId/hiring/close',
+  groupCollabController.closeGroupHiring
+);
+
+/* ================= USER → GROUP ================= */
+
+router.post(
+  '/:groupId/collab/requests',
+  groupCollabController.sendCollabRequest
+);
+
+router.get(
+  '/:groupId/collab/my-request',
+  groupCollabController.getMyCollabRequestStatus
+);
+
+/* ================= ADMIN ================= */
+
+router.get(
+  '/:groupId/collab/requests/pending',
+  groupCollabController.getPendingCollabRequests
+);
+
+router.post(
+  '/:groupId/collab/requests/:requestId/approve',
+  groupCollabController.approveCollabRequest
+);
+
+router.post(
+  '/:groupId/collab/requests/:requestId/reject',
+  groupCollabController.rejectCollabRequest
+);
+
+router.post(
+  '/:groupId/collab/requests/reject-all',
+  groupCollabController.rejectAllPendingCollabRequests
+);
+
+router.post(
+  "/:groupId/hiring/close",
+  groupCollabController.closeGroupHiring
+);
 
 module.exports = router;

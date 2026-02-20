@@ -154,8 +154,7 @@
 //     getGroupDetails: getGroupDetailsSchema
 //   }
 // };
-final 
-utils/validators.js
+
 const Joi = require('joi');
 
 // Helper to format error messages
