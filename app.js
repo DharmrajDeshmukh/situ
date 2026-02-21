@@ -6,6 +6,8 @@ const cors = require('cors');
 
 const app = express();
 app.set("trust proxy", 1);
+import authRoutes from "./routes/authRoutes.js";
+app.use("/api/auth", authRoutes);
 
 const connectDB = require("./config/db");
 connectDB();
