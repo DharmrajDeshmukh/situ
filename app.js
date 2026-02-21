@@ -36,7 +36,7 @@ app.use(cors());
 app.use(morgan('dev'));
 app.use(express.json());
 
-const BASE_URL = '/project1/api/v1';
+const BASE_URL = '/api/v1';
 
 // ---------------- ROUTES ----------------
 
