@@ -348,20 +348,54 @@ exports.requestEmailVerification = async (req, res) => {
   try {
     const { email } = req.body;
 
+    // 1️⃣ Validate input
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required"
+      });
+    }
+
+    // 2️⃣ Generate OTP
     const code = generateOTP();
     const hashed_code = await hashData(code);
 
+    // 3️⃣ Store / Update OTP
     await Otp.findOneAndUpdate(
-      { identifier: email, type: 'email' },
-      { hashed_otp: hashed_code, attempts: 0, createdAt: new Date() },
+      { identifier: email, type: "email" },
+      {
+        hashed_otp: hashed_code,
+        attempts: 0,
+        createdAt: new Date()
+      },
       { upsert: true }
     );
 
-    await sendEmail(email, code);
+    // 4️⃣ Send Email
+    const emailSent = await sendEmail(email, code);
 
-    res.status(200).json({ success: true, message: 'Email sent' });
-  } catch {
-    res.status(500).json({ success: false, message: 'Server error' });
+    // 5️⃣ Check result
+    if (!emailSent) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send email"
+      });
+    }
+
+    // 6️⃣ Success
+    res.status(200).json({
+      success: true,
+      message: "Email sent",
+      expires_in_seconds: 300
+    });
+
+  } catch (error) {
+    console.error("Email verification error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error"
+    });
   }
 };
 
