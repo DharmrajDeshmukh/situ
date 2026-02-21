@@ -6,6 +6,10 @@ const cors = require('cors');
 
 const app = express();
 
+app.get("/check", (req, res) => {
+  res.json({ status: "API WORKING PERFECTLY" });
+});
+
 app.use(
   helmet({
     contentSecurityPolicy: {
