@@ -6,6 +6,9 @@ const cors = require('cors');
 
 const app = express();
 
+const connectDB = require("./config/db");
+connectDB();
+
 app.get("/check", (req, res) => {
   res.json({ status: "API WORKING PERFECTLY" });
 });
