@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 
 const app = express();
+app.set("trust proxy", 1);
 
 const connectDB = require("./config/db");
 connectDB();
