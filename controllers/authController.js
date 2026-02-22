@@ -264,32 +264,46 @@ const RefreshToken = require('../models/RefreshToken');
 const { hashData, verifyHash, generateTokens, generateOTP } = require('../utils/helpers');
 const { sendSMS, sendEmail } = require('../utils/senders');
 
+const twilio = require("twilio");
+
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
+
 /* ===========================
    1. REQUEST PHONE OTP
 =========================== */
 exports.requestPhoneOtp = async (req, res) => {
   try {
     const { phone } = req.body;
-    if (!phone) return res.status(400).json({ success: false, message: 'Phone required' });
 
-    const otp = generateOTP();
-    const hashed_otp = await hashData(otp);
+    if (!phone)
+      return res.status(400).json({
+        success: false,
+        message: "Phone required"
+      });
 
-    await Otp.findOneAndUpdate(
-      { identifier: phone, type: 'phone' },
-      { hashed_otp, attempts: 0, createdAt: new Date() },
-      { upsert: true }
-    );
-
-    await sendSMS(phone, otp);
+    // Twilio generates OTP automatically
+    const result = await twilioClient.verify.v2
+      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+      .verifications
+      .create({
+        to: phone,
+        channel: "sms"
+      });
 
     res.status(200).json({
       success: true,
-      message: 'OTP sent',
-      otp_expires_in_seconds: 300
+      message: "OTP sent via Twilio"
     });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' });
+
+  } catch (error) {
+    console.error("Twilio send error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send OTP"
+    });
   }
 };
 
@@ -300,22 +314,31 @@ exports.verifyPhoneOtp = async (req, res) => {
   try {
     const { phone, otp, device_id } = req.body;
 
-    const otpRecord = await Otp.findOne({ identifier: phone, type: 'phone' });
-    if (!otpRecord) return res.status(410).json({ success: false, message: 'OTP expired' });
+    const result = await twilioClient.verify.v2
+      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+      .verificationChecks
+      .create({
+        to: phone,
+        code: otp
+      });
 
-    if (otpRecord.attempts >= 3)
-      return res.status(403).json({ success: false, message: 'Max attempts exceeded' });
-
-    const isValid = await verifyHash(otp, otpRecord.hashed_otp);
-    if (!isValid) {
-      otpRecord.attempts++;
-      await otpRecord.save();
-      return res.status(400).json({ success: false, message: 'Invalid OTP' });
+    if (result.status !== "approved") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP"
+      });
     }
 
+    // OTP VALID → LOGIN USER
+
     let user = await User.findOne({ phone });
-    if (!user) user = await User.create({ phone, is_phone_verified: true });
-    else {
+
+    if (!user) {
+      user = await User.create({
+        phone,
+        is_phone_verified: true
+      });
+    } else {
       user.is_phone_verified = true;
       await user.save();
     }
@@ -328,16 +351,20 @@ exports.verifyPhoneOtp = async (req, res) => {
       device_id
     });
 
-    await Otp.deleteOne({ _id: otpRecord._id });
-
     res.status(200).json({
       success: true,
       access_token: accessToken,
       refresh_token: `${tokenDoc._id}.${refreshToken}`,
       user
     });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' });
+
+  } catch (error) {
+    console.error("Twilio verify error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Verification failed"
+    });
   }
 };
 

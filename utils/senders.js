@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const twilio = require("twilio");
 
 /* ===========================
    GMAIL SMTP TRANSPORT
@@ -13,21 +14,38 @@ const transporter = nodemailer.createTransport({
 });
 
 /* ===========================
-   SEND SMS (Mock for now)
+   TWILIO VERIFY CLIENT
 =========================== */
 
-exports.sendSMS = async (phone, otp) => {
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
+
+/* ===========================
+   SEND SMS (TWILIO VERIFY)
+=========================== */
+
+exports.sendSMS = async (phone) => {
   try {
-    if (!phone || !otp) {
-      console.error("SMS: Missing phone or otp");
+    if (!phone) {
+      console.error("SMS: Missing phone number");
       return false;
     }
 
-    console.log(`[SMS_MOCK] Sending OTP ${otp} to ${phone}`);
+    const response = await twilioClient.verify.v2
+      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+      .verifications
+      .create({
+        to: phone,
+        channel: "sms",
+      });
+
+    console.log("✅ OTP sent via Twilio:", response.sid);
     return true;
 
   } catch (error) {
-    console.error("SMS error:", error);
+    console.error("❌ Twilio SMS error:", error.message || error);
     return false;
   }
 };
@@ -68,7 +86,7 @@ exports.sendEmail = async (email, code, type = "otp") => {
     return true;
 
   } catch (error) {
-    console.error("❌ Email error:", error);
+    console.error("❌ Email error:", error.message || error);
     return false;
   }
 };
