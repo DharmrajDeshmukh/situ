@@ -6,7 +6,7 @@ const cors = require('cors');
 
 const app = express();
 app.set("trust proxy", 1);
-import authRoutes from "./routes/authRoutes.js";
+const authRoutes = require("./routes/authRoutes");
 app.use("/api/auth", authRoutes);
 
 const connectDB = require("./config/db");
@@ -104,5 +104,14 @@ app.use((req, res) =>
   res.status(404).json({ success: false, message: 'Endpoint not found' })
 );
 
+const PORT = process.env.PORT || 5000;
+
+if (process.env.NODE_ENV !== "production") {
+ app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
+});
+}
 
 module.exports = app;
+
+

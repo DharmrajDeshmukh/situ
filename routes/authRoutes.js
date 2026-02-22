@@ -2,8 +2,7 @@ const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/authController');
 const { phoneOtpLimiter, verifyLimiter } = require('../config/rateLimiters');
-import { sendEmail } from "../utils/sendEmail.js";
-
+const { sendEmail } = require("../utils/sendEmail");
 
 // Import Validator
 const { validateRequest, schemas } = require('../utils/validators');

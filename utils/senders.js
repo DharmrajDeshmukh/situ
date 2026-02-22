@@ -1,18 +1,21 @@
-const { Resend } = require("resend");
+const nodemailer = require("nodemailer");
 
-if (!process.env.RESEND_API_KEY) {
-  console.error("❌ RESEND_API_KEY is missing in environment variables");
-}
+/* ===========================
+   GMAIL SMTP TRANSPORT
+=========================== */
 
-if (!process.env.EMAIL_FROM) {
-  console.error("❌ EMAIL_FROM is missing in environment variables");
-}
-
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS,
+  },
+});
 
 /* ===========================
    SEND SMS (Mock for now)
 =========================== */
+
 exports.sendSMS = async (phone, otp) => {
   try {
     if (!phone || !otp) {
@@ -30,17 +33,13 @@ exports.sendSMS = async (phone, otp) => {
 };
 
 /* ===========================
-   SEND EMAIL (Resend)
+   SEND EMAIL (GMAIL SMTP)
 =========================== */
+
 exports.sendEmail = async (email, code, type = "otp") => {
   try {
     if (!email || !code) {
       console.error("Email: Missing email or code");
-      return false;
-    }
-
-    if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
-      console.error("Email: Missing environment configuration");
       return false;
     }
 
@@ -53,29 +52,23 @@ exports.sendEmail = async (email, code, type = "otp") => {
       <div style="font-family: Arial, sans-serif;">
         <h2>${subject}</h2>
         <p>Your code is:</p>
-        <h1 style="letter-spacing: 4px;">${code}</h1>
+        <h1 style="letter-spacing:4px;">${code}</h1>
         <p>This expires in 5 minutes.</p>
       </div>
     `;
 
-    const response = await resend.emails.send({
-      from: process.env.EMAIL_FROM,
+    const info = await transporter.sendMail({
+      from: `"Setu App" <${process.env.GMAIL_USER}>`,
       to: email,
       subject,
-      html
+      html,
     });
 
-    console.log("✅ Resend response:", response);
-
-    if (response?.id) {
-      return true;
-    }
-
-    console.error("Email: Resend did not return ID");
-    return false;
+    console.log("✅ Email sent:", info.messageId);
+    return true;
 
   } catch (error) {
-    console.error("❌ Resend error:", error.response?.data || error.message || error);
+    console.error("❌ Email error:", error);
     return false;
   }
 };
