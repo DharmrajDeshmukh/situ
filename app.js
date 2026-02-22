@@ -1,4 +1,11 @@
 require('dotenv').config();
+
+process.on("unhandledRejection", (error) => {
+  console.error("🔥 UNHANDLED REJECTION:");
+  console.error(error);
+  console.error(error?.stack);
+});
+
 const express = require('express');
 const morgan = require('morgan');
 const helmet = require('helmet');
