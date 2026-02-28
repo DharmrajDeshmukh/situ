@@ -131,30 +131,41 @@ if (stage && allowedStages.includes(stage)) {
 
     /* ================= CREATE PROJECT CHAT (IF LINKED TO GROUP) ================= */
 
-    if (group) {
-     const chatRoom = await ChatRoom.create({
-  name: project.title,
-  communityId: group.communityId,
-  groupId: group._id,
-  projectId: project._id,
-  type: "PROJECT",
-  isPrivate: true,
-  members: [
+   if (group) {
+
+  const chatMembers = [
     {
       userId: userId,
       role: "OWNER",
       joinedAt: new Date()
     }
-  ],
-  createdBy: userId
-});
+  ];
 
-
-      // Optional: store chatRoomId inside project (recommended)
-      project.chatRoomId = chatRoom._id;
-      await project.save();
+  // Add invited users to chat room members
+  for (const invite of parsedInvites) {
+    if (invite.userId) {
+      chatMembers.push({
+        userId: invite.userId,
+        role: invite.role || "MEMBER",
+        joinedAt: new Date()
+      });
     }
+  }
 
+  const chatRoom = await ChatRoom.create({
+    name: project.title,
+    communityId: group.communityId,
+    groupId: group._id,
+    projectId: project._id,
+    type: "PROJECT",
+    isPrivate: true,
+    members: chatMembers,
+    createdBy: userId
+  });
+
+  project.chatRoomId = chatRoom._id;
+  await project.save();
+}
     return res.status(201).json({
       projectId: project._id,
       message: "Project created successfully"

@@ -42,7 +42,6 @@ exports.demoteAdmin = async (req, res) => {
         res.json({ success: true, message: 'Demoted to member' });
     } catch (e) { res.status(403).json({ success: false, message: e.message }); }
 };
-
 // 3. Update Group Permissions
 exports.updateGroupPermissions = async (req, res) => {
     try {

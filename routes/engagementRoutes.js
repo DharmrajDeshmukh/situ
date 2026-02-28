@@ -10,5 +10,6 @@ router.post('/like', controller.like);
 router.post('/unlike', controller.unlike);
 router.post('/comment', controller.comment);
 router.post('/share', controller.share);
+router.get('/comments', controller.getComments);
 
 module.exports = router;

@@ -727,10 +727,10 @@ exports.getUserProjects = async (req, res) => {
 // Matches: @GET("/project1/api/v1/profile/view/{userId}")
 exports.getUserProfileView = async (req, res) => {
   try {
-    const viewerId = req.user.id;          // 👈 logged-in user
+    const viewerId = req.user.id;
     const targetUserId = req.params.userId;
 
-    const user = await User.findById(targetUserId);
+    const user = await User.findById(targetUserId).lean();
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -738,7 +738,8 @@ exports.getUserProfileView = async (req, res) => {
       });
     }
 
-    // ================= CONNECTION STATUS =================
+    /* ================= CONNECTION STATUS ================= */
+
     let connectionStatus = "NOT_CONNECTED";
 
     const connection = await ConnectionRequest.findOne({
@@ -753,20 +754,36 @@ exports.getUserProfileView = async (req, res) => {
       if (connection.status === "accepted") {
         connectionStatus = "CONNECTED";
       } else if (connection.status === "pending") {
-        if (connection.sender_id.toString() === viewerId) {
-          connectionStatus = "REQUEST_SENT";
-        } else {
-          connectionStatus = "REQUEST_RECEIVED";
-        }
+        connectionStatus =
+          connection.sender_id.toString() === viewerId
+            ? "REQUEST_SENT"
+            : "REQUEST_RECEIVED";
       }
     }
 
-    // ================= GROUPS =================
+    /* ================= FOLLOWERS / FOLLOWING ================= */
+
+    const followersCount = user.followers ? user.followers.length : 0;
+    const followingCount = user.following ? user.following.length : 0;
+
+    /* ================= CONNECTION COUNT ================= */
+
+    const connectionsCount = await ConnectionRequest.countDocuments({
+      target_type: "USER",
+      status: "accepted",
+      $or: [
+        { sender_id: targetUserId },
+        { receiver_id: targetUserId }
+      ]
+    });
+
+    /* ================= PUBLIC GROUPS ================= */
+
     const publicGroups = await Group.find({
       visibility: "public",
       members: { $in: [user._id] }
     })
-      .select("name description profile_image visibility created_at")
+      .select("_id name description profile_image visibility created_at")
       .lean();
 
     const formattedGroups = publicGroups.map(group => ({
@@ -778,15 +795,60 @@ exports.getUserProfileView = async (req, res) => {
       joined_at: group.created_at
     }));
 
-    // ================= RESPONSE =================
+    /* ================= STANDALONE POSTS ================= */
+
+    const standalonePosts = await Post.find({
+      user_id: targetUserId,
+      group_id: null,
+      project_id: null,
+      is_deleted: false
+    })
+      .sort({ createdAt: -1 })
+      .select("_id text media createdAt")
+      .lean();
+
+    const formattedPosts = standalonePosts.map(p => ({
+      post_id: p._id,
+      text: p.text,
+      media: p.media,
+      createdAt: p.createdAt
+    }));
+
+    /* ================= USER PROJECTS ================= */
+
+    const projectMemberships = await ProjectMember.find({
+      user_id: targetUserId,
+      status: "ACCEPTED",
+      is_removed: false
+    }).populate("project_id");
+
+    const userProjects = projectMemberships
+      .filter(m => m.project_id && !m.project_id.is_deleted)
+      .map(m => ({
+        project_id: m.project_id._id,
+        title: m.project_id.title,
+        bannerUrl: m.project_id.banner_url,
+        role: m.role,
+        group_id: m.project_id.group_id || null,
+        status: m.project_id.project_status || null
+      }));
+
+    /* ================= PROJECT STATS ================= */
+
+    const totalProjects = userProjects.length;
+    const ongoingProjects = userProjects.filter(p => p.status === "ongoing").length;
+    const completedProjects = userProjects.filter(p => p.status === "completed").length;
+
+    /* ================= RESPONSE ================= */
+
     res.status(200).json({
       success: true,
 
-      connectionStatus, // ✅ THIS WAS MISSING
+      connectionStatus,
 
       permissions: {
-        is_owner: false,
-        can_edit: false,
+        is_owner: viewerId === targetUserId,
+        can_edit: viewerId === targetUserId,
         can_message: connectionStatus === "CONNECTED"
       },
 
@@ -794,7 +856,7 @@ exports.getUserProfileView = async (req, res) => {
         user_id: user._id,
         name: user.name,
         username: user.username,
-        profile_image: user.profilePic,
+        profile_image: user.profilePic || null,
         bio: user.bio,
         college: user.college,
         skills: user.skills || [],
@@ -803,9 +865,12 @@ exports.getUserProfileView = async (req, res) => {
       },
 
       stats: {
-        total_projects: 5,
-        ongoing_projects: 2,
-        completed_projects: 3
+        total_projects: totalProjects,
+        ongoing_projects: ongoingProjects,
+        completed_projects: completedProjects,
+        followers: followersCount,
+        following: followingCount,
+        connections: connectionsCount
       },
 
       groups: {
@@ -813,8 +878,15 @@ exports.getUserProfileView = async (req, res) => {
         list: formattedGroups
       },
 
-      projects: { count: 0, list: [] },
-      posts: { count: 0, list: [] }
+      projects: {
+        count: userProjects.length,
+        list: userProjects
+      },
+
+      posts: {
+        count: formattedPosts.length,
+        list: formattedPosts
+      }
     });
 
   } catch (err) {

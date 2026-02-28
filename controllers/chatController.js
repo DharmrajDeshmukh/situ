@@ -309,96 +309,119 @@ exports.getChatHome = async (req, res) => {
     const currentUserId = req.user.id;
     const homeFeed = [];
 
-    // --- A. DIRECT CHATS ---
-    // Find chats where current user is either userOne or userTwo
-    const directChats = await DirectChat.find({
-      $or: [{ userOneId: currentUserId }, { userTwoId: currentUserId }]
-    }).populate('userOneId userTwoId', 'name profileImage');
+    /* ========= DIRECT CHATS ========= */
 
-    for (const chat of directChats) {
-      // Identify the "other" user
-      const isUserOne = chat.userOneId._id.toString() === currentUserId;
-      const otherUser = isUserOne ? chat.userTwoId : chat.userOneId;
+    const directRooms = await ChatRoom.find({
+      type: "DIRECT",
+      "members.userId": currentUserId
+    }).populate("members.userId", "name profilePic");
 
-      // Fetch the last message for this chat
-      const lastMsg = await ChatMessage.findOne({ directChatId: chat._id })
-        .sort({ sentAt: -1 });
+    for (const room of directRooms) {
 
-      // Count unread messages
+      const otherMember = room.members.find(
+        m => m.userId && m.userId._id.toString() !== currentUserId
+      );
+
+      if (!otherMember) continue;
+
+      const otherUser = otherMember.userId;
+
+      const lastMsg = await ChatMessage.findOne({
+        roomId: room._id
+      }).sort({ sentAt: -1 });
+
       const unreadCount = await ChatMessage.countDocuments({
-        directChatId: chat._id,
+        roomId: room._id,
+        senderId: { $ne: currentUserId },
         readBy: { $ne: currentUserId }
       });
 
-      // Map to ChatHomeResponse [cite: 1804-1822]
       homeFeed.push({
-        chatId: chat._id.toString(),        // Maps to 'chatId'
-        roomId: null,                       // Null for direct chats [cite: 1807]
-        directChatId: chat._id.toString(),  // Maps to 'directChatId' [cite: 1808]
-        chatType: 'DIRECT',                 // Maps to 'chatType' [cite: 1809]
-        title: otherUser.name,              // Maps to 'title' [cite: 1810]
-        avatarUrl: otherUser.profileImage,  // Maps to 'avatarUrl' [cite: 1811]
-        
-        // Message Details
-        lastMessageId: lastMsg ? lastMsg._id.toString() : "", // [cite: 1812]
-        lastMessage: lastMsg ? lastMsg.cipherText : null,     // 
-        lastSenderId: lastMsg ? lastMsg.senderId.toString() : "", // 
-        messageType: lastMsg ? lastMsg.messageType : "TEXT",  // [cite: 1819]
-        sentAt: lastMsg ? new Date(lastMsg.sentAt).getTime() : new Date(chat.createdAt).getTime(), // [cite: 1820]
-        
-        unreadCount: unreadCount,           // [cite: 1821]
-        isPinned: false                     // [cite: 1822]
+        chatId: room._id.toString(),
+        roomId: room._id.toString(),
+        directChatId: null,
+        communityId: null,
+        chatType: "DIRECT",
+
+        title: otherUser.name,
+        avatarUrl: otherUser.profilePic ?? null, // ✅ FIXED
+
+        lastMessageId: lastMsg?._id?.toString() ?? "",
+        lastMessage: lastMsg?.cipherText ?? null,
+        lastSenderId: lastMsg?.senderId?.toString() ?? "",
+        messageType: lastMsg?.messageType ?? "TEXT",
+
+        sentAt: lastMsg?.sentAt
+          ? new Date(lastMsg.sentAt).getTime()
+          : new Date(room.createdAt).getTime(),
+
+        unreadCount,
+        isPinned: false
       });
     }
 
-   // --- B. COMMUNITY GROUP CHATS ---
-const communities = await Community.find({
-  members: currentUserId
+    /* ========= GROUP CHATS ========= */
+
+    const communities = await Community.find({
+      members: currentUserId
+    });
+
+    for (const community of communities) {
+
+      const group = await Group.findOne({
+        communityId: community._id
+      });
+
+    const rooms = await ChatRoom.find({
+  communityId: community._id,
+  $or: [
+    { chatType: room.type, },
+    {
+      type: "PROJECT",
+      "members.userId": currentUserId
+    }
+  ]
 });
 
-for (const community of communities) {
+      for (const room of rooms) {
 
-  const rooms = await ChatRoom.find({
-    communityId: community._id
-  });
+        const lastMsg = await ChatMessage.findOne({
+          roomId: room._id
+        }).sort({ sentAt: -1 });
 
-  for (const room of rooms) {
-    const lastMsg = await ChatMessage.findOne({ roomId: room._id })
-      .sort({ sentAt: -1 });
+        const unreadCount = await ChatMessage.countDocuments({
+          roomId: room._id,
+          senderId: { $ne: currentUserId },
+          readBy: { $ne: currentUserId }
+        });
 
-    const unreadCount = await ChatMessage.countDocuments({
-      roomId: room._id,
-      readBy: { $ne: currentUserId }
-    });
+        homeFeed.push({
+          chatId: room._id.toString(),
+          roomId: room._id.toString(),
+          communityId: community._id.toString(),
+          directChatId: null,
+          chatType: "GROUP",
 
-    homeFeed.push({
-      chatId: room._id.toString(),
-      roomId: room._id.toString(),
-      communityId: community._id.toString(),
-      directChatId: null,
-      chatType: 'GROUP',
-      title: `${community.name} - ${room.name}`,
-      avatarUrl: null,
+          title: `${group?.name ?? community.name} - ${room.name}`,
+          avatarUrl: group?.profile_image ?? null, // ✅ FIXED
 
-      lastMessageId: lastMsg ? lastMsg._id.toString() : "",
-      lastMessage: lastMsg ? lastMsg.cipherText : null,
-      lastSenderId: lastMsg ? lastMsg.senderId.toString() : "",
-      messageType: lastMsg ? lastMsg.messageType : "TEXT",
-      sentAt: lastMsg
-        ? new Date(lastMsg.sentAt).getTime()
-        : new Date(room.createdAt).getTime(),
+          lastMessageId: lastMsg?._id?.toString() ?? "",
+          lastMessage: lastMsg?.cipherText ?? null,
+          lastSenderId: lastMsg?.senderId?.toString() ?? "",
+          messageType: lastMsg?.messageType ?? "TEXT",
 
-      unreadCount,
-      isPinned: false
-    });
-  }
-}
+          sentAt: lastMsg?.sentAt
+            ? new Date(lastMsg.sentAt).getTime()
+            : new Date(room.createdAt).getTime(),
 
+          unreadCount,
+          isPinned: false
+        });
+      }
+    }
 
-    // --- C. SORTING ---
-    // Sort feed by most recent activity (descending)
-    homeFeed.sort((a, b) => b.sentAt - a.sentAt);
-    
+    homeFeed.sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
+
     res.json(homeFeed);
 
   } catch (err) {
@@ -446,7 +469,8 @@ exports.getCommunityChatHome = async (req, res) => {
     const { communityId } = req.params;
     const userId = req.user.id;
 
-    // 1️⃣ Membership check
+    /* ================= MEMBERSHIP CHECK ================= */
+
     const community = await Community.findOne({
       _id: communityId,
       members: userId
@@ -459,29 +483,47 @@ exports.getCommunityChatHome = async (req, res) => {
       });
     }
 
-    // 2️⃣ Get rooms
-    const rooms = await ChatRoom.find({ communityId });
+    /* ================= FETCH ROOMS ================= */
+
+    const rooms = await ChatRoom.find({
+      communityId,
+      $or: [
+        { type: "GROUP" }, // General room
+        {
+          type: "PROJECT",
+          "members.userId": userId // 🔥 only if user belongs to project
+        }
+      ]
+    });
 
     const chatFeed = [];
 
     for (const room of rooms) {
-      const lastMsg = await ChatMessage.findOne({ roomId: room._id })
-        .sort({ sentAt: -1 });
+
+      const lastMsg = await ChatMessage.findOne({
+        roomId: room._id
+      }).sort({ sentAt: -1 });
 
       chatFeed.push({
         chatId: room._id.toString(),
         roomId: room._id.toString(),
-        chatType: "GROUP",
+        chatType: room.type, // ✅ IMPORTANT FIX
         title: room.name,
+
         lastMessage: lastMsg?.cipherText ?? null,
-        lastSenderId: lastMsg?.senderId ?? null,
+        lastSenderId: lastMsg?.senderId?.toString() ?? null,
+
         sentAt: lastMsg
           ? new Date(lastMsg.sentAt).getTime()
           : new Date(room.createdAt).getTime()
       });
     }
 
-    res.json({
+    /* ================= SORT BY LATEST ================= */
+
+    chatFeed.sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
+
+    return res.json({
       success: true,
       communityId,
       chats: chatFeed
@@ -489,6 +531,6 @@ exports.getCommunityChatHome = async (req, res) => {
 
   } catch (err) {
     console.error("Community Chat Home Error:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 };
