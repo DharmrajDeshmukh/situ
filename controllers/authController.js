@@ -426,24 +426,31 @@ exports.requestEmailVerification = async (req, res) => {
   }
 };
 
-/* ===========================
-   4. VERIFY EMAIL
-=========================== */
+
 exports.verifyEmail = async (req, res) => {
   try {
     const { email, code } = req.body;
 
     const record = await Otp.findOne({ identifier: email, type: 'email' });
-    if (!record) return res.status(410).json({ success: false, message: 'Expired' });
+    if (!record)
+      return res.status(410).json({ success: false, message: 'Expired' });
 
     const isValid = await verifyHash(code, record.hashed_otp);
-    if (!isValid) return res.status(400).json({ success: false, message: 'Invalid code' });
+    if (!isValid)
+      return res.status(400).json({ success: false, message: 'Invalid code' });
 
     let user = await User.findOne({ email });
-    if (!user) user = await User.create({ email, is_email_verified: true });
-    else {
-      user.is_email_verified = true;
-      await user.save();
+
+    if (!user) {
+      user = await User.create({
+        email,
+        is_email_verified: true
+      });
+    } else {
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { is_email_verified: true } }
+      );
     }
 
     const { accessToken, refreshToken } = generateTokens(user);
@@ -461,8 +468,10 @@ exports.verifyEmail = async (req, res) => {
       refresh_token: `${tokenDoc._id}.${refreshToken}`,
       user
     });
-  } catch {
-    res.status(500).json({ success: false, message: 'Server error' });
+
+  } catch (error) {
+    console.error("Verify Email Error:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
