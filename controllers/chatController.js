@@ -372,10 +372,10 @@ exports.getChatHome = async (req, res) => {
         communityId: community._id
       });
 
-    const rooms = await ChatRoom.find({
+   const rooms = await ChatRoom.find({
   communityId: community._id,
   $or: [
-    { chatType: room.type, },
+    { type: "GROUP" },  // General rooms
     {
       type: "PROJECT",
       "members.userId": currentUserId
@@ -485,16 +485,16 @@ exports.getCommunityChatHome = async (req, res) => {
 
     /* ================= FETCH ROOMS ================= */
 
-    const rooms = await ChatRoom.find({
-      communityId,
-      $or: [
-        { type: "GROUP" }, // General room
-        {
-          type: "PROJECT",
-          "members.userId": userId // 🔥 only if user belongs to project
-        }
-      ]
-    });
+   const rooms = await ChatRoom.find({
+  communityId: community._id,
+  $or: [
+    { type: "GROUP" },  // General rooms
+    {
+      type: "PROJECT",
+     "members.userId": userId
+    }
+  ]
+});
 
     const chatFeed = [];
 

@@ -311,7 +311,7 @@ const Community = require('../models/Community');
 const ChatRoom = require('../models/ChatRoom');
 const GroupMember = require('../models/GroupMember');
 const mongoose = require("mongoose");
-
+const Project = require("../models/project");
 
 
 // Helper to determine User Role
@@ -695,16 +695,7 @@ exports.updateMemberPermissions = async (req, res) => {
 };
 
 // 16. GET GROUP PROJECTS
-exports.getGroupProjects = async (req, res) => {
-  try {
-    res.status(200).json({
-      success: true,
-      projects: [{ project_id: "p1", title: "AI App", description: "An AI project", status: "ongoing", created_at: new Date() }]
-    });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-};
 
-// ✅ ADD MEMBERS TO GROUP
 exports.addMembersToGroup = async (req, res) => {
   try {
     const { group_id } = req.params;
@@ -721,25 +712,32 @@ exports.addMembersToGroup = async (req, res) => {
 
     for (const userId of members) {
 
-      // 1️⃣ Add to Group model (if not already)
+      // Add to Group.members safely
       if (!group.members.some(id => id.toString() === userId)) {
         group.members.push(userId);
       }
 
-      // 2️⃣ 🔥 IMPORTANT: Add to GroupMember collection
-      await GroupMember.create({
+      // Prevent duplicate GroupMember entry
+      const existing = await GroupMember.findOne({
         groupId: group._id,
-        userId: userId,
-        role: "member",
-        permissions: {
-          canCreateProject: false,
-          canCreatePost: true,
-          canDeletePost: false,
-          canInviteMembers: false,
-          canRemoveMembers: false,
-          canHireMembers: false
-        }
+        userId: userId
       });
+
+      if (!existing) {
+        await GroupMember.create({
+          groupId: group._id,
+          userId: userId,
+          role: "member",
+          permissions: {
+            canCreateProject: false,
+            canCreatePost: true,
+            canDeletePost: false,
+            canInviteMembers: false,
+            canRemoveMembers: false,
+            canHireMembers: false
+          }
+        });
+      }
     }
 
     await group.save();
@@ -751,9 +749,13 @@ exports.addMembersToGroup = async (req, res) => {
 
   } catch (err) {
     console.error("Add member error:", err);
-    res.status(500).json({ message: err.message });
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
   }
 };
+
 
 
 
@@ -799,3 +801,34 @@ res.status(200).json({
 };
 
 
+exports.getGroupProjects = async (req, res) => {
+  try {
+    const { group_id } = req.params;
+
+    const projects = await Project.find({
+      group_id: group_id,
+      is_deleted: false
+    }).sort({ createdAt: -1 });
+
+    const formatted = projects.map(p => ({
+      project_id: p._id.toString(),
+      title: p.title,
+      description: p.description,
+      banner_url: p.banner_url,
+      visibility: p.visibility,
+      created_at: p.createdAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      projects: formatted
+    });
+
+  } catch (err) {
+    console.error("getGroupProjects error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch group projects"
+    });
+  }
+};

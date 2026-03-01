@@ -79,4 +79,6 @@ projectSchema.index({ group_id: 1, createdAt: -1 });
 projectSchema.index({ visibility: 1, is_deleted: 1, createdAt: -1 });
 
 
-module.exports = mongoose.model("Project", projectSchema);
+module.exports =
+  mongoose.models.Project ||
+  mongoose.model("Project", projectSchema);
