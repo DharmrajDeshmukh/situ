@@ -311,7 +311,7 @@ const Community = require('../models/Community');
 const ChatRoom = require('../models/ChatRoom');
 const GroupMember = require('../models/GroupMember');
 const mongoose = require("mongoose");
-const Project = require("../models/project");
+const Project = require("../models/Project");
 
 
 // Helper to determine User Role
