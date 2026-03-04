@@ -237,8 +237,6 @@ exports.getGroupRequests = async (req,res)=>{
    INVITE USER TO GROUP
 ===================================================== */
 
-
-
 exports.inviteUserToGroup = async (req,res)=>{
 
   try{
@@ -276,46 +274,64 @@ exports.inviteUserToGroup = async (req,res)=>{
 
     /* ================= CHECK CONNECTION ================= */
 
-    const inviter = await User.findById(inviterId).select("connections")
+   /* ================= CHECK CONNECTION STATUS ================= */
 
-    const isConnected =
-      inviter.connections.some(id => id.toString() === userId)
+const inviter = await User.findById(inviterId).select("connections")
 
-    if (!isConnected) {
+let isConnected =
+  inviter.connections.some(id => id.toString() === userId)
 
-      const existingConnection = await ConnectionRequest.findOne({
-        $or: [
-          { sender_id: inviterId, receiver_id: userId },
-          { sender_id: userId, receiver_id: inviterId }
-        ]
-      })
+/* check existing connection request */
 
-      let isConnected =
-  inviter.connections.some(id => id.toString() === userId);
+const connection = await ConnectionRequest.findOne({
+  target_type: "USER",
+  $or: [
+    { sender_id: inviterId, receiver_id: userId },
+    { sender_id: userId, receiver_id: inviterId }
+  ]
+})
 
 if (!isConnected) {
 
-  const existingConnection = await ConnectionRequest.findOne({
-    $or: [
-      { sender_id: inviterId, receiver_id: userId },
-      { sender_id: userId, receiver_id: inviterId }
-    ]
-  });
+  if (connection) {
 
-  if (!existingConnection) {
+    /* user2 already sent request → auto accept */
+
+    if (
+      connection.status === "PENDING" &&
+      connection.sender_id.toString() === userId
+    ) {
+
+      connection.status = "ACCEPTED"
+      await connection.save()
+
+      await User.findByIdAndUpdate(
+        inviterId,
+        { $addToSet: { connections: userId } }
+      )
+
+      await User.findByIdAndUpdate(
+        userId,
+        { $addToSet: { connections: inviterId } }
+      )
+
+      isConnected = true
+    }
+
+  } else {
+
+    /* send connection request */
 
     await ConnectionRequest.create({
       sender_id: inviterId,
       receiver_id: userId,
       target_type: "USER",
       status: "PENDING"
-    });
+    })
 
   }
 
 }
-
-    }
 
     /* ================= ALREADY MEMBER CHECK ================= */
 
