@@ -747,32 +747,66 @@ exports.updateMemberPermissions = async (req, res) => {
 
 exports.addMembersToGroup = async (req, res) => {
   try {
+
     const { group_id } = req.params;
     const { members } = req.body;
 
     if (!Array.isArray(members) || members.length === 0) {
-      return res.status(400).json({ message: "No members provided" });
+      return res.status(400).json({
+        success: false,
+        message: "No members provided"
+      });
     }
 
     const group = await Group.findById(group_id);
+
     if (!group) {
-      return res.status(404).json({ message: "Group not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Group not found"
+      });
     }
+
+    /* ===============================
+       FIND COMMUNITY
+    =============================== */
+
+    const community = await Community.findOne({
+      groupId: group._id
+    });
+
+    /* ===============================
+       FIND CHAT ROOM
+    =============================== */
+
+    const chatRoom = await ChatRoom.findOne({
+      groupId: group._id,
+      type: "GROUP"
+    });
+
+    let addedCount = 0;
 
     for (const userId of members) {
 
-      // Add to Group.members safely
+      /* ===============================
+         GROUP MEMBERS ARRAY
+      =============================== */
+
       if (!group.members.some(id => id.toString() === userId)) {
         group.members.push(userId);
       }
 
-      // Prevent duplicate GroupMember entry
-      const existing = await GroupMember.findOne({
+      /* ===============================
+         GROUP MEMBER DOCUMENT
+      =============================== */
+
+      const existingMember = await GroupMember.findOne({
         groupId: group._id,
         userId: userId
       });
 
-      if (!existing) {
+      if (!existingMember) {
+
         await GroupMember.create({
           groupId: group._id,
           userId: userId,
@@ -786,22 +820,66 @@ exports.addMembersToGroup = async (req, res) => {
             canHireMembers: false
           }
         });
+
+        addedCount++;
       }
+
+      /* ===============================
+         COMMUNITY MEMBERSHIP
+      =============================== */
+
+      if (community) {
+
+        if (!community.members.some(id => id.toString() === userId)) {
+          community.members.push(userId);
+        }
+
+      }
+
+      /* ===============================
+         CHAT ROOM MEMBERSHIP
+      =============================== */
+
+      if (chatRoom) {
+
+        const exists = chatRoom.members.some(
+          m => m.userId.toString() === userId
+        );
+
+        if (!exists) {
+
+          chatRoom.members.push({
+            userId,
+            role: "MEMBER",
+            joinedAt: new Date()
+          });
+
+        }
+
+      }
+
     }
 
     await group.save();
 
+    if (community) await community.save();
+
+    if (chatRoom) await chatRoom.save();
+
     res.status(200).json({
       success: true,
-      added_members: members.length
+      added_members: addedCount
     });
 
   } catch (err) {
+
     console.error("Add member error:", err);
+
     res.status(500).json({
       success: false,
-      message: err.message
+      message: "Failed to add members"
     });
+
   }
 };
 

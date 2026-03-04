@@ -8,7 +8,8 @@ const Project = require('../models/Project');
 const Skill = require('../models/Skill');
 const Interest = require('../models/Interest');
 const College = require('../models/College');
-const Invitation = require('../models/Invitation');
+const Request = require('../models/Request');
+const GroupMember = require('../models/GroupMember');
 
 exports.search = async (req, res) => {
   try {
@@ -132,36 +133,93 @@ exports.search = async (req, res) => {
       // =====================================================
       // GROUP MEMBER ADD
       // =====================================================
-  case 'GROUP_MEMBER_ADD': {
+case 'GROUP_MEMBER_ADD': {
 
   const { groupId } = req.body;
 
   const currentUser = await User.findById(userId).select('connections');
   const connectedIds = currentUser?.connections || [];
 
-  // 🔹 Users matching search
   const potentialMembers = await User.find({
     name: regex,
     _id: { $ne: userId }
   }).limit(limit);
 
-  // 🔹 Fetch existing invitations
-  const invitations = await Invitation.find({
+  /* ================= GROUP NOT CREATED YET ================= */
+
+  if (!groupId || groupId === "") {
+
+    response.users = mapUsersWithConnectionAndInvite(
+      potentialMembers,
+      connectedIds,
+      {}
+    );
+
+    break;
+  }
+
+  /* ================= GROUP EXISTS ================= */
+
+  const userIds = potentialMembers.map(u => u._id);
+
+  const existingMembers = await GroupMember.find({
     groupId,
-    userId: { $in: potentialMembers.map(u => u._id) }
+    userId: { $in: userIds }
+  }).select("userId");
+
+  const memberSet = new Set(
+    existingMembers.map(m => m.userId.toString())
+  );
+
+  const requests = await Request.find({
+    groupId,
+    type: "GROUP_INVITE",
+    receiverId: { $in: userIds }
   });
 
-  // 🔹 Convert invitations to map
   const invitationMap = {};
-  invitations.forEach(inv => {
-    invitationMap[inv.userId.toString()] = inv.status;
+
+  requests.forEach(req => {
+    invitationMap[req.receiverId.toString()] = req.status;
   });
+
+  const filteredUsers = potentialMembers.filter(
+    u => !memberSet.has(u._id.toString())
+  );
 
   response.users = mapUsersWithConnectionAndInvite(
-    potentialMembers,
+    filteredUsers,
     connectedIds,
     invitationMap
   );
+
+  break;
+}
+
+case 'PROJECT_CREATE': {
+
+  const { groupId } = req.body;
+
+  if (!groupId) {
+    response.users = [];
+    break;
+  }
+
+  const members = await GroupMember.find({
+    groupId
+  }).populate("userId","name profilePic");
+
+  const filteredMembers = members
+    .filter(m =>
+      m.userId.name.toLowerCase().includes(query.toLowerCase())
+    )
+    .slice(0, limit);
+
+  response.users = filteredMembers.map(m => ({
+    userId: m.userId._id,
+    fullName: m.userId.name,
+    profilePic: m.userId.profilePic
+  }));
 
   break;
 }
@@ -228,9 +286,11 @@ exports.search = async (req, res) => {
 // =====================================================
 
 function mapUsersWithConnectionAndInvite(users, connectedIds, invitationMap) {
+
   return users.map(u => {
 
     const email = u.email ?? "";
+
     const username = email.includes("@")
       ? email.split("@")[0]
       : "";
@@ -239,7 +299,7 @@ function mapUsersWithConnectionAndInvite(users, connectedIds, invitationMap) {
       id => id.toString() === u._id.toString()
     );
 
-    const invitationStatus =
+    const inviteStatus =
       invitationMap[u._id.toString()] || "NONE";
 
     return {
@@ -247,10 +307,11 @@ function mapUsersWithConnectionAndInvite(users, connectedIds, invitationMap) {
       username,
       fullName: u.name ?? "",
       profilePic: u.profilePic ?? null,
-      connectionStatus: isConnected ? "CONNECTED" : "NOT_CONNECTED",
 
-      // ✅ NEW FIELD
-      invitationStatus
+      connectionStatus:
+        isConnected ? "CONNECTED" : "NOT_CONNECTED",
+
+      invitationStatus: inviteStatus
     };
   });
 }

@@ -71,8 +71,6 @@ app.use(`${BASE_URL}/search`, require('./routes/searchRoutes'));
 // Chat
 app.use(BASE_URL, require('./routes/chatRoutes'));
 
-// Invitations
-app.use(`${BASE_URL}/invitations`, require('./routes/invitationRoutes'));
 
 // Requests
 app.use(`${BASE_URL}/requests`, require('./routes/requestRoutes'));

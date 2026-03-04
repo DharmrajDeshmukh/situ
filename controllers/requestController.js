@@ -1,260 +1,744 @@
-const Request = require('../models/Request');
-const Invitation = require('../models/Invitation');
-const User = require('../models/User');
-const GroupMember = require('../models/GroupMember');
-const Group = require('../models/Group');
-const Community = require('../models/Community');
-const ChatRoom = require('../models/ChatRoom');
+const mongoose = require("mongoose")
 
-/* ======================================================
-   GET MY REQUESTS (UNIFIED)
-====================================================== */
+const Request = require("../models/Request")
+const User = require("../models/User")
 
-exports.getMyRequests = async (req, res) => {
-  try {
-    const userId = req.user.id;
+const Group = require("../models/Group")
+const GroupMember = require("../models/GroupMember")
 
-    // 1️⃣ USER REQUESTS
-    const userRequests = await Request.find({
-      receiverId: userId,
-      status: 'PENDING'
+const ChatRoom = require("../models/ChatRoom")
+const ConnectionRequest = require("../models/ConnectionRequest");
+
+/* =====================================================
+   GET MY REQUESTS
+===================================================== */
+
+exports.getMyRequests = async (req,res)=>{
+
+  try{
+
+    const userId = req.user.id
+
+    const requests = await Request.find({
+      receiverId:userId,
+      status:{ $in:["PENDING","APPROVED"] }
     })
-      .populate('senderId', 'name profileImage')
-      .sort({ createdAt: -1 })
-      .lean();
-
-    const mappedUserRequests = userRequests.map(r => ({
-      _id: r._id,
-      source: 'REQUEST',
-      type: r.type,
-      sender: r.senderId,
-      createdAt: r.createdAt
-    }));
-
-    // 2️⃣ GROUP / PROJECT INVITATIONS
-    const invitations = await Invitation.find({
-      invitedUserId: userId,
-      status: 'PENDING'
-    })
-      .populate('invitedBy', 'name profileImage')
-      .populate('groupId', 'name profileImage')
-      .sort({ createdAt: -1 })
-      .lean();
-
-    const mappedInvitations = invitations.map(i => ({
-      _id: i._id,
-      source: 'INVITATION',
-      type: i.type,
-      sender: i.invitedBy,
-      group: i.groupId,
-      role: i.role,
-      createdAt: i.createdAt
-    }));
-
-    // 3️⃣ MERGE BOTH
-    const requests = [...mappedUserRequests, ...mappedInvitations]
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    .populate("senderId","name profileImage")
+    .populate("groupId","name profileImage")
+    .sort({ createdAt:-1 })
+    .lean()
 
     return res.json({
-      success: true,
+      success:true,
       requests
-    });
+    })
 
-  } catch (err) {
+  }
+  catch(err){
+
+    console.error("getMyRequests error:",err)
+
     return res.status(500).json({
-      success: false,
-      message: err.message
-    });
+      success:false,
+      message:"Server error"
+    })
+
   }
-};
+
+}
 
 
-/* ======================================================
-   SEND REQUEST (ONLY USER_CONNECTION)
-====================================================== */
-exports.sendRequest = async (req, res) => {
-  try {
-    const { type, receiverId } = req.body;
-    const senderId = req.user.id;
 
-    if (senderId === receiverId) {
-      return res.status(400).json({ success: false, message: "Cannot send to self" });
-    }
+/* =====================================================
+   SEND REQUEST
+===================================================== */
 
-    const existing = await Request.findOne({
-      type,
-      senderId,
+exports.sendRequest = async (req,res)=>{
+
+  try{
+
+    const senderId = req.user.id
+
+    const {
       receiverId,
-      status: 'PENDING'
-    });
-
-    if (existing) {
-      return res.status(409).json({ success: false, message: "Already sent" });
-    }
-
-    const request = await Request.create({
+      groupId,
+      projectId,
       type,
-      senderId,
-      receiverId,
-      status: 'PENDING'
-    });
+      role,
+      message
+    } = req.body
 
-    return res.status(201).json({ success: true, request });
 
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-/* ======================================================
-   ACCEPT REQUEST / INVITATION
-====================================================== */
-exports.acceptRequest = async (req, res) => {
-  try {
-    const { requestId } = req.params;
-    const userId = req.user.id;
-
-    // 1️⃣ Find invitation
-    const invitation = await Invitation.findById(requestId);
-    if (!invitation || invitation.status !== "PENDING") {
-      return res.status(404).json({
-        success: false,
-        message: "Invalid invitation"
-      });
+    if (!type) {
+      return res.status(400).json({
+        success:false,
+        message:"type required"
+      })
     }
 
-    // 2️⃣ Security check
-    if (invitation.invitedUserId.toString() !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: "Unauthorized"
-      });
+    if (receiverId && senderId === receiverId) {
+      return res.status(400).json({
+        success:false,
+        message:"Cannot send request to yourself"
+      })
     }
 
-    // ================================
-    // GROUP INVITATION ACCEPT
-    // ================================
-    if (invitation.type === "GROUP") {
 
-      // 3️⃣ Add to group
-      const group = await Group.findById(invitation.groupId);
+    /* ================= GROUP VALIDATION ================= */
+
+    if (groupId) {
+
+      const group = await Group.findById(groupId)
 
       if (!group) {
         return res.status(404).json({
-          success: false,
-          message: "Group not found"
-        });
+          success:false,
+          message:"Group not found"
+        })
       }
 
-      if (!group.members.includes(userId)) {
-        group.members.push(userId);
-        await group.save();
+    }
+
+
+    /* ================= DUPLICATE CHECK ================= */
+
+    const existing = await Request.findOne({
+
+      senderId,
+      receiverId,
+      groupId,
+      projectId,
+      type,
+      status:"PENDING"
+
+    })
+
+    if (existing) {
+
+      return res.status(409).json({
+        success:false,
+        message:"Request already exists"
+      })
+
+    }
+
+
+    /* ================= CREATE REQUEST ================= */
+
+    const request = await Request.create({
+
+      senderId,
+      receiverId,
+      groupId:groupId || null,
+      projectId:projectId || null,
+      type,
+      role:role || "member",
+      message:message || "",
+      status:"PENDING"
+
+    })
+
+
+    return res.status(201).json({
+
+      success:true,
+      request
+
+    })
+
+
+  }
+  catch(err){
+
+    console.error("sendRequest error:",err)
+
+    return res.status(500).json({
+      success:false,
+      message:"Server error"
+    })
+
+  }
+
+}
+
+
+
+/* =====================================================
+   GET GROUP REQUESTS (OWNER / ADMIN VIEW)
+===================================================== */
+
+exports.getGroupRequests = async (req,res)=>{
+
+  try{
+
+    const { groupId } = req.params
+    const userId = req.user.id
+
+
+    /* ================= ADMIN CHECK ================= */
+
+    const admin = await GroupMember.findOne({
+
+      groupId,
+      userId,
+      role:{ $in:["owner","admin","co_owner"] }
+
+    })
+
+    if (!admin) {
+
+      return res.status(403).json({
+        success:false,
+        message:"Only admins can view requests"
+      })
+
+    }
+
+
+    /* ================= FETCH REQUESTS ================= */
+
+    const requests = await Request.find({
+
+      groupId,
+      type:"GROUP_JOIN_REQUEST",
+      status:"PENDING"
+
+    })
+    .populate("senderId","name profileImage")
+    .sort({ createdAt:-1 })
+    .lean()
+
+
+    return res.json({
+
+      success:true,
+      requests
+
+    })
+
+
+  }
+  catch(err){
+
+    console.error("getGroupRequests error:",err)
+
+    return res.status(500).json({
+      success:false,
+      message:"Server error"
+    })
+
+  }
+
+}
+
+
+
+/* =====================================================
+   INVITE USER TO GROUP
+===================================================== */
+
+
+
+exports.inviteUserToGroup = async (req,res)=>{
+
+  try{
+
+    const { groupId } = req.params
+    const { userId } = req.body
+
+    const inviterId = req.user.id
+
+    if (!userId) {
+      return res.status(400).json({
+        success:false,
+        message:"userId required"
+      })
+    }
+
+    /* ================= ADMIN CHECK ================= */
+
+    const admin = await GroupMember.findOne({
+
+      groupId,
+      userId:inviterId,
+      role:{ $in:["owner","admin","co_owner"] }
+
+    })
+
+    if (!admin) {
+
+      return res.status(403).json({
+        success:false,
+        message:"Only admins can invite"
+      })
+
+    }
+
+    /* ================= CHECK CONNECTION ================= */
+
+    const inviter = await User.findById(inviterId).select("connections")
+
+    const isConnected =
+      inviter.connections.some(id => id.toString() === userId)
+
+    if (!isConnected) {
+
+      const existingConnection = await ConnectionRequest.findOne({
+        $or: [
+          { sender_id: inviterId, receiver_id: userId },
+          { sender_id: userId, receiver_id: inviterId }
+        ]
+      })
+
+      if (!existingConnection) {
+
+        await ConnectionRequest.create({
+          sender_id: inviterId,
+          receiver_id: userId,
+          target_type: "USER",
+          status: "PENDING"
+        })
+
       }
 
-      // 4️⃣ Add to community
-      const community = await Community.findOne({ groupId: group._id });
-      if (community && !community.members.includes(userId)) {
-        community.members.push(userId);
-        await community.save();
-      }
+    }
 
-      // 5️⃣ Add to group chat (🔥 FIX HERE)
-      const chatRoom = await ChatRoom.findOne({
-        groupId: group._id,
-        type: "GROUP"
-      });
+    /* ================= ALREADY MEMBER CHECK ================= */
 
-      if (
-        chatRoom &&
-        !chatRoom.members.some(m => m.userId.toString() === userId)
-      ) {
+    const member = await GroupMember.findOne({
+      groupId,
+      userId
+    })
+
+    if (member) {
+      return res.status(409).json({
+        success:false,
+        message:"User already member"
+      })
+    }
+
+    /* ================= DUPLICATE INVITE CHECK ================= */
+
+    const existingInvite = await Request.findOne({
+
+      receiverId:userId,
+      groupId,
+      type:"GROUP_INVITE",
+      status:"PENDING"
+
+    })
+
+    if (existingInvite) {
+
+      return res.status(409).json({
+        success:false,
+        message:"Invite already sent"
+      })
+
+    }
+
+    /* ================= CREATE GROUP INVITE ================= */
+
+    const request = await Request.create({
+
+      senderId:inviterId,
+      receiverId:userId,
+      groupId,
+      type:"GROUP_INVITE",
+      role:"member",
+      status:"PENDING"
+
+    })
+
+    return res.status(201).json({
+
+      success:true,
+      request
+
+    })
+
+  }
+  catch(err){
+
+    console.error("inviteUserToGroup error:",err)
+
+    return res.status(500).json({
+      success:false,
+      message:"Server error"
+    })
+
+  }
+
+}
+
+
+
+/* =====================================================
+   ACCEPT REQUEST
+===================================================== */
+
+exports.acceptRequest = async (req,res)=>{
+
+  try{
+
+    const { requestId } = req.params
+    const userId = req.user.id
+
+    const request = await Request.findById(requestId)
+
+    if (!request || request.status !== "PENDING") {
+
+      return res.status(400).json({
+        success:false,
+        message:"Invalid request"
+      })
+
+    }
+
+    if (request.receiverId.toString() !== userId) {
+
+      return res.status(403).json({
+        success:false,
+        message:"Unauthorized"
+      })
+
+    }
+
+
+    /* ================= GROUP INVITE ================= */
+
+    if (request.type === "GROUP_INVITE") {
+
+      request.status = "APPROVED"
+      await request.save()
+
+      return res.json({
+        success:true,
+        message:"Invitation approved"
+      })
+
+    }
+
+
+    /* ================= GROUP JOIN REQUEST ================= */
+
+    if (request.type === "GROUP_JOIN_REQUEST") {
+
+      request.status = "APPROVED"
+      await request.save()
+
+      return res.json({
+        success:true,
+        message:"User approved to join group"
+      })
+
+    }
+
+
+    /* ================= DEFAULT ================= */
+
+    request.status = "ACCEPTED"
+    await request.save()
+
+    return res.json({
+      success:true,
+      message:"Request accepted"
+    })
+
+
+  }
+  catch(err){
+
+    console.error("acceptRequest error:",err)
+
+    return res.status(500).json({
+      success:false,
+      message:"Server error"
+    })
+
+  }
+
+}
+
+
+
+/* =====================================================
+   REJECT REQUEST
+===================================================== */
+
+exports.rejectRequest = async (req,res)=>{
+
+  try{
+
+    const { requestId } = req.params
+    const userId = req.user.id
+
+    const request = await Request.findById(requestId)
+
+    if (!request || request.status !== "PENDING") {
+
+      return res.status(400).json({
+        success:false,
+        message:"Invalid request"
+      })
+
+    }
+
+    if (request.receiverId.toString() !== userId) {
+
+      return res.status(403).json({
+        success:false,
+        message:"Unauthorized"
+      })
+
+    }
+
+    request.status = "REJECTED"
+
+    await request.save()
+
+    return res.json({
+
+      success:true,
+      message:"Request rejected"
+
+    })
+
+
+  }
+  catch(err){
+
+    console.error("rejectRequest error:",err)
+
+    return res.status(500).json({
+      success:false,
+      message:"Server error"
+    })
+
+  }
+
+}
+
+
+
+/* =====================================================
+   JOIN GROUP (AFTER APPROVAL)
+===================================================== */
+
+exports.joinGroup = async (req,res)=>{
+
+  try{
+
+    const { requestId } = req.params
+    const userId = req.user.id
+
+    const request = await Request.findById(requestId)
+
+    if (!request || request.status !== "APPROVED") {
+
+      return res.status(400).json({
+        success:false,
+        message:"Request not approved"
+      })
+
+    }
+
+    if (request.receiverId.toString() !== userId) {
+
+      return res.status(403).json({
+        success:false,
+        message:"Unauthorized"
+      })
+
+    }
+
+
+    /* ================= ALREADY MEMBER ================= */
+
+    const exists = await GroupMember.findOne({
+
+      groupId:request.groupId,
+      userId
+
+    })
+
+    if (exists) {
+
+      return res.json({
+        success:true,
+        message:"Already a member"
+      })
+
+    }
+
+
+    /* ================= ADD MEMBER ================= */
+
+    await GroupMember.create({
+
+      groupId:request.groupId,
+      userId,
+      role:request.role || "member"
+
+    })
+
+
+    /* ================= UPDATE GROUP ================= */
+
+    const group = await Group.findById(request.groupId)
+
+    if (group) {
+
+      group.members.addToSet(userId)
+      await group.save()
+
+    }
+
+
+    /* ================= ADD TO CHAT ================= */
+
+    const chatRoom = await ChatRoom.findOne({
+
+      groupId:request.groupId,
+      type:"GROUP"
+
+    })
+
+    if (chatRoom) {
+
+      const exists = chatRoom.members.some(
+        m => m.userId.toString() === userId
+      )
+
+      if (!exists) {
+
         chatRoom.members.push({
           userId,
-          role: "MEMBER" // ✅ ONLY VALID VALUE
-        });
-        await chatRoom.save();
+          role:"MEMBER"
+        })
+
+        await chatRoom.save()
+
       }
+
     }
 
-    // 6️⃣ Finalize invitation
-    invitation.status = "ACCEPTED";
-    await invitation.save();
+
+    request.status = "ACCEPTED"
+    await request.save()
+
 
     return res.json({
-      success: true,
-      message: "Group joined successfully"
-    });
 
-  } catch (err) {
-    console.error("ACCEPT REQUEST ERROR:", err);
-    return res.status(500).json({
-      success: false,
-      message: err.message
-    });
+      success:true,
+      message:"Joined group successfully"
+
+    })
+
+
   }
-};
+  catch(err){
 
+    console.error("joinGroup error:",err)
 
+    return res.status(500).json({
+      success:false,
+      message:"Server error"
+    })
 
+  }
 
-/* ======================================================
-   REJECT REQUEST / INVITATION
-====================================================== */
-exports.rejectRequest = async (req, res) => {
+}
+
+/* =====================================================
+   BULK INVITE USERS TO GROUP
+===================================================== */
+
+exports.bulkInviteUsersToGroup = async (req, res) => {
+
   try {
-    const { requestId } = req.params;
-    const userId = req.user.id;
 
-    let request = await Request.findById(requestId);
-    let source = 'REQUEST';
+    const { groupId } = req.params
+    const { userIds } = req.body
+    const inviterId = req.user.id
 
-    if (!request) {
-      request = await Invitation.findById(requestId);
-      source = 'INVITATION';
-    }
-
-    if (!request) {
-      return res.status(404).json({
-        success: false,
-        message: "Request not found"
-      });
-    }
-
-    /* ================= AUTH CHECK ================= */
-    const isAuthorized =
-      source === 'REQUEST'
-        ? request.receiverId.toString() === userId
-        : request.invitedUserId.toString() === userId;
-
-    if (!isAuthorized) {
-      return res.status(403).json({
-        success: false,
-        message: "Not authorized"
-      });
-    }
-
-    if (request.status !== 'PENDING') {
+    if (!Array.isArray(userIds) || userIds.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Already processed"
-      });
+        message: "userIds array required"
+      })
     }
 
-    /* ================= REJECT ================= */
-    request.status = 'REJECTED';
-    await request.save();
+    /* ================= ADMIN CHECK ================= */
+
+    const admin = await GroupMember.findOne({
+      groupId,
+      userId: inviterId,
+      role: { $in: ["owner", "admin", "co_owner"] }
+    })
+
+    if (!admin) {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can invite"
+      })
+    }
+
+    /* ================= FILTER USERS ================= */
+
+    const requestsToInsert = []
+
+    for (const userId of userIds) {
+
+      // Skip if already a member
+      const member = await GroupMember.findOne({
+        groupId,
+        userId
+      })
+
+      if (member) continue
+
+      // Skip if invite already exists
+      const existing = await Request.findOne({
+        receiverId: userId,
+        groupId,
+        type: "GROUP_INVITE",
+        status: "PENDING"
+      })
+
+      if (existing) continue
+
+      requestsToInsert.push({
+        senderId: inviterId,
+        receiverId: userId,
+        groupId,
+        type: "GROUP_INVITE",
+        role: "member",
+        status: "PENDING"
+      })
+
+    }
+
+    /* ================= INSERT ================= */
+
+    if (requestsToInsert.length > 0) {
+      await Request.insertMany(requestsToInsert)
+    }
 
     return res.json({
       success: true,
-      message: "Request rejected"
-    });
+      invited: requestsToInsert.length
+    })
 
   } catch (err) {
-    console.error("rejectRequest error:", err);
+
+    console.error("bulkInviteUsersToGroup error:", err)
+
     return res.status(500).json({
       success: false,
-      message: err.message
-    });
-  }
-};
+      message: "Server error"
+    })
 
+  }
+
+}

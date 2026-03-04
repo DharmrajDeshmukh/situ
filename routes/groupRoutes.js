@@ -3,7 +3,7 @@ const router = express.Router();
 const controller = require('../controllers/groupController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/upload'); // ✅ Cloudinary upload middleware
-const invitationController = require('../controllers/invitationController');
+
 
 // Protect all routes
 router.use(protect);
@@ -65,10 +65,6 @@ router.get('/:group_id/projects', controller.getGroupProjects);
 // --------------------
 router.post('/:group_id/members', controller.addMembersToGroup);
 
-router.post(
-  "/:groupId/invite",
-  
-  invitationController.inviteUserToGroup
-);
+
 
 module.exports = router;
