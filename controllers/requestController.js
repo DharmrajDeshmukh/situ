@@ -407,17 +407,62 @@ exports.acceptRequest = async (req,res)=>{
 
     /* ================= GROUP INVITE ================= */
 
-    if (request.type === "GROUP_INVITE") {
+  if (request.type === "GROUP_INVITE") {
 
-      request.status = "APPROVED"
-      await request.save()
+  const exists = await GroupMember.findOne({
+    groupId: request.groupId,
+    userId
+  })
 
-      return res.json({
-        success:true,
-        message:"Invitation approved"
-      })
+  if (!exists) {
 
+    await GroupMember.create({
+      groupId: request.groupId,
+      userId,
+      role: request.role || "member"
+    })
+
+    const group = await Group.findById(request.groupId)
+
+    if (group) {
+      group.members.addToSet(userId)
+      await group.save()
     }
+
+    const chatRoom = await ChatRoom.findOne({
+      groupId: request.groupId,
+      type: "GROUP"
+    })
+
+    if (chatRoom) {
+
+      const already = chatRoom.members.some(
+        m => m.userId.toString() === userId
+      )
+
+      if (!already) {
+
+        chatRoom.members.push({
+          userId,
+          role: "MEMBER"
+        })
+
+        await chatRoom.save()
+
+      }
+    }
+
+  }
+
+  request.status = "ACCEPTED"
+  await request.save()
+
+  return res.json({
+    success: true,
+    message: "Joined group successfully"
+  })
+
+}
 
 
     /* ================= GROUP JOIN REQUEST ================= */

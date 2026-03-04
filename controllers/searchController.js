@@ -51,7 +51,7 @@ exports.search = async (req, res) => {
           User.find({
   $or: [{ name: regex }, { email: regex }]
 })
-.select('name email username profilePic')
+.select('name email username profileImage')
 .limit(5),
 
           // GROUPS
@@ -70,7 +70,7 @@ exports.search = async (req, res) => {
 
           // PROJECTS
           Project.find({
-            name: regex
+            title: regex
           })
           .limit(5)
         ]);
@@ -311,7 +311,10 @@ function mapUsersWithConnectionAndInvite(users, connectedIds, invitationMap) {
       connectionStatus:
         isConnected ? "CONNECTED" : "NOT_CONNECTED",
 
-      invitationStatus: inviteStatus
+      invitationStatus: inviteStatus,
+
+      // 🔥 NEW FIELD
+      canInvite: true
     };
   });
 }
@@ -320,6 +323,8 @@ function mapGroups(groups) {
   return groups.map(g => ({
     groupId: g._id,
     name: g.name,
+    description: g.description ?? "",
+    profileImage: g.profileImage ?? null,
     memberCount: g.members?.length || 0,
     isMember: false
   }));
@@ -338,8 +343,26 @@ function mapPosts(posts) {
 function mapProjects(projects) {
   return projects.map(p => ({
     projectId: p._id,
-    title: p.name ?? "",
+    title: p.title ?? "",
     stage: p.currentStage ?? "Idea",
     projectImageUrl: p.imageUrl ?? null
   }));
+}
+
+function mapUsers(users) {
+  return users.map(u => {
+
+    const email = u.email ?? "";
+
+    const username = email.includes("@")
+      ? email.split("@")[0]
+      : "";
+
+    return {
+      userId: u._id,
+      username,
+      fullName: u.name ?? "",
+      profilePic: u.profileImage ?? null
+    };
+  });
 }
