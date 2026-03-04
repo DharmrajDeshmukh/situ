@@ -316,86 +316,112 @@ const Project = require("../models/Project");
 
 // Helper to determine User Role
 const getUserRole = (group, userId) => {
-  if (group.owner_id.toString() === userId) return "owner";
-  if (group.admins.includes(userId)) return "admin";
-  if (group.members.some(id => id.toString() === userId)) return "member";
+
+  if (group.owner_id.toString() === userId) {
+    return "owner";
+  }
+
+  if (group.admins?.some(id => id.toString() === userId)) {
+    return "admin";
+  }
+
+  if (group.members?.some(id => id.toString() === userId)) {
+    return "member";
+  }
+
   return "visitor";
 };
 
 // 1. CREATE GROUP (Manual)
 exports.createGroup = async (req, res) => {
   try {
-    const { name, description, visibility, members = [] } = req.body;
 
-    const uniqueMembers = [
-      req.user.id,
-      ...members.filter(id => id !== req.user.id)
-    ];
+    const { name, description, visibility } = req.body;
+    const userId = req.user.id;
 
-          // 1️⃣ CREATE GROUP
-      const group = await Group.create({
-        name,
-        description,
-        visibility,
-        owner_id: req.user.id,
-        members: uniqueMembers,
-        admins: [req.user.id]
-      });
+    /* ===============================
+       1️⃣ CREATE GROUP
+    =============================== */
 
-      await GroupMember.create({
-  groupId: group._id,
-  userId: req.user.id,
-  role: "owner",
-  permissions: {
-    canCreateProject: true,
-    canCreatePost: true,
-    canDeletePost: true,
-    canInviteMembers: true,
-    canRemoveMembers: true,
-    canHireMembers: true
-  }
-});
+    const group = await Group.create({
+      name,
+      description,
+      visibility,
+      owner_id: userId,
+      members: [userId],          // ✅ only owner initially
+      admins: [userId]
+    });
 
-      // 2️⃣ CREATE COMMUNITY
-      const community = await Community.create({
-        name,
-        createdBy: req.user.id,
-        members: uniqueMembers,
-        groupId: group._id
-      });
+    /* ===============================
+       2️⃣ CREATE OWNER MEMBERSHIP
+    =============================== */
 
-      // 3️⃣ LINK COMMUNITY TO GROUP
-      group.communityId = community._id;
-      await group.save();
+    await GroupMember.create({
+      groupId: group._id,
+      userId: userId,
+      role: "owner",
+      permissions: {
+        canCreateProject: true,
+        canCreatePost: true,
+        canDeletePost: true,
+        canInviteMembers: true,
+        canRemoveMembers: true,
+        canHireMembers: true
+      }
+    });
 
-      // 4️⃣ ✅ CREATE DEFAULT "GENERAL" CHAT ROOM  (🔥 IMPORTANT)
-            await ChatRoom.create({
-        name: "General",
-        communityId: community._id,
-        groupId: group._id,      // 🔥 THIS WAS MISSING
-        type: "GROUP",
-        createdBy: req.user.id
-      });
+    /* ===============================
+       3️⃣ CREATE COMMUNITY
+    =============================== */
 
+    const community = await Community.create({
+      name,
+      createdBy: userId,
+      members: [userId],      // ✅ only owner
+      groupId: group._id
+    });
 
-      // 5️⃣ SEND RESPONSE (LAST STEP)
-      res.status(201).json({
-        success: true,
-        group_id: group._id,
-        community_id: community._id,
-        role: "owner"
-      });
+    /* ===============================
+       4️⃣ LINK COMMUNITY → GROUP
+    =============================== */
 
+    group.communityId = community._id;
+    await group.save();
 
+    /* ===============================
+       5️⃣ CREATE DEFAULT CHAT ROOM
+    =============================== */
+
+    await ChatRoom.create({
+      name: "General",
+      communityId: community._id,
+      groupId: group._id,
+      type: "GROUP",
+      createdBy: userId
+    });
+
+    /* ===============================
+       6️⃣ RESPONSE
+    =============================== */
+
+    res.status(201).json({
+      success: true,
+      group_id: group._id,
+      community_id: community._id,
+      role: "owner"
+    });
 
   } catch (err) {
+
     console.error("CREATE GROUP ERROR:", err);
+
     res.status(500).json({
       success: false,
-      message: err.message
+      message: "Failed to create group"
     });
+
   }
-};
+};  
 
 
 
@@ -491,44 +517,67 @@ exports.getGroupOverview = async (req, res) => {
 // 5. GET MY GROUP ACCESS (Updated)
 exports.getMyGroupAccess = async (req, res) => {
   try {
-    const group = await Group.findById(req.params.group_id);
 
-    // ✅ ADD IT HERE
-    if (!group) {
-      return res.status(404).json({ message: "Group not found" });
-    }
-
+    const { group_id } = req.params;
     const userId = req.user.id;
 
-    const isMember = group.members.some(
-      id => id.toString() === userId
-    );
+    // Fetch only needed fields (performance optimization)
+    const group = await Group.findById(group_id)
+      .select("owner_id admins members");
 
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: "Group not found"
+      });
+    }
+
+    // Convert userId to ObjectId
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
+    // Membership check
+    const isMember = group.members?.some(id => id.equals(userObjectId));
+
+    // Determine role
     let role = "visitor";
-    if (group.owner_id.toString() === userId) {
+
+    if (group.owner_id.equals(userObjectId)) {
       role = "owner";
-    } else if (group.admins.some(id => id.toString() === userId)) {
+    } 
+    else if (group.admins?.some(id => id.equals(userObjectId))) {
       role = "admin";
-    } else if (isMember) {
+    } 
+    else if (isMember) {
       role = "member";
     }
 
+    // Permissions logic
+    const permissions = {
+      can_post: isMember,
+      can_manage_members: role === "owner" || role === "admin",
+      can_edit_group: role === "owner" || role === "admin",
+      can_delete_group: role === "owner",
+      canEditPermissions: role === "owner"
+    };
+
     res.status(200).json({
+      success: true,
       isMember,
       isFollower: false,
       isConnected: false,
       role,
-      permissions: {
-        can_post: isMember,
-        can_manage_members: role === "owner" || role === "admin",
-        can_edit_group: role === "owner" || role === "admin",
-        can_delete_group: role === "owner",
-        canEditPermissions: role === "owner"
-      }
+      permissions
     });
 
   } catch (err) {
-    res.status(500).json({ message: err.message });
+
+    console.error("getMyGroupAccess error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch group access"
+    });
+
   }
 };
 

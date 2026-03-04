@@ -8,11 +8,12 @@ const Project = require('../models/Project');
 const Skill = require('../models/Skill');
 const Interest = require('../models/Interest');
 const College = require('../models/College');
+const Invitation = require('../models/Invitation');
 
 exports.search = async (req, res) => {
   try {
     const { query, context, page = 1, limit = 20 } = req.body;
-
+    const userId = req.user.id;
     const response = {
       users: [],
       groups: [],
@@ -131,15 +132,39 @@ exports.search = async (req, res) => {
       // =====================================================
       // GROUP MEMBER ADD
       // =====================================================
-      case 'GROUP_MEMBER_ADD': {
+  case 'GROUP_MEMBER_ADD': {
 
-        const potentialMembers = await User.find({
-          name: regex
-        }).limit(limit);
+  const { groupId } = req.body;
 
-        response.users = mapUsers(potentialMembers);
-        break;
-      }
+  const currentUser = await User.findById(userId).select('connections');
+  const connectedIds = currentUser?.connections || [];
+
+  // 🔹 Users matching search
+  const potentialMembers = await User.find({
+    name: regex,
+    _id: { $ne: userId }
+  }).limit(limit);
+
+  // 🔹 Fetch existing invitations
+  const invitations = await Invitation.find({
+    groupId,
+    userId: { $in: potentialMembers.map(u => u._id) }
+  });
+
+  // 🔹 Convert invitations to map
+  const invitationMap = {};
+  invitations.forEach(inv => {
+    invitationMap[inv.userId.toString()] = inv.status;
+  });
+
+  response.users = mapUsersWithConnectionAndInvite(
+    potentialMembers,
+    connectedIds,
+    invitationMap
+  );
+
+  break;
+}
 
       // =====================================================
       // SKILL
@@ -202,7 +227,7 @@ exports.search = async (req, res) => {
 // HELPER MAPPERS
 // =====================================================
 
-function mapUsers(users) {
+function mapUsersWithConnectionAndInvite(users, connectedIds, invitationMap) {
   return users.map(u => {
 
     const email = u.email ?? "";
@@ -210,12 +235,22 @@ function mapUsers(users) {
       ? email.split("@")[0]
       : "";
 
+    const isConnected = connectedIds.some(
+      id => id.toString() === u._id.toString()
+    );
+
+    const invitationStatus =
+      invitationMap[u._id.toString()] || "NONE";
+
     return {
       userId: u._id,
       username,
       fullName: u.name ?? "",
       profilePic: u.profilePic ?? null,
-      isConnected: false
+      connectionStatus: isConnected ? "CONNECTED" : "NOT_CONNECTED",
+
+      // ✅ NEW FIELD
+      invitationStatus
     };
   });
 }

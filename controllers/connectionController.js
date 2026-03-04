@@ -6,18 +6,40 @@ const User = require('../models/User');
 ====================================================== */
 exports.sendConnection = async (req, res) => {
   try {
+
     const { targetId, targetType = 'USER' } = req.body;
     const senderId = req.user.id;
 
     if (!targetId) {
-      return res.status(400).json({ success: false, message: 'Target ID required' });
+      return res.status(400).json({
+        success: false,
+        message: 'Target ID required'
+      });
     }
 
     if (senderId === targetId) {
-      return res.status(400).json({ success: false, message: 'Cannot connect to self' });
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot connect to self'
+      });
     }
 
-    // Check existing in both directions
+    /* ---------------- CHECK ALREADY CONNECTED ---------------- */
+
+    const sender = await User.findById(senderId).select("connections");
+
+    const alreadyConnected =
+      sender.connections.some(id => id.toString() === targetId);
+
+    if (alreadyConnected) {
+      return res.status(400).json({
+        success: false,
+        message: "Users already connected"
+      });
+    }
+
+    /* ---------------- CHECK EXISTING REQUEST ---------------- */
+
     const existing = await ConnectionRequest.findOne({
       target_type: targetType,
       $or: [
@@ -29,53 +51,67 @@ exports.sendConnection = async (req, res) => {
     if (existing) {
       return res.status(409).json({
         success: false,
-        message: 'Request already exists',
+        message: "Request already exists",
         status: existing.status
       });
     }
 
+    /* ---------------- CREATE REQUEST ---------------- */
+
     await ConnectionRequest.create({
       sender_id: senderId,
       receiver_id: targetId,
-      target_type: targetType
+      target_type: targetType,
+      status: "PENDING"
     });
 
     return res.status(201).json({
       success: true,
-      status: 'REQUEST_SENT'
+      status: "REQUEST_SENT"
     });
 
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
   }
 };
+
 
 /* ======================================================
    ACCEPT CONNECTION
 ====================================================== */
+
 exports.acceptConnection = async (req, res) => {
   try {
-    const { targetId, targetType = 'USER' } = req.body;
+
+    const { targetId, targetType = "USER" } = req.body;
     const receiverId = req.user.id;
 
     const request = await ConnectionRequest.findOne({
       sender_id: targetId,
       receiver_id: receiverId,
       target_type: targetType,
-      status: 'pending'
+      status: "PENDING"
     });
 
     if (!request) {
       return res.status(404).json({
         success: false,
-        message: 'No pending request found'
+        message: "No pending request found"
       });
     }
 
-    request.status = 'accepted';
+    /* ---------------- UPDATE STATUS ---------------- */
+
+    request.status = "ACCEPTED";
     await request.save();
 
-    // Mutual connection
+    /* ---------------- MUTUAL CONNECTION ---------------- */
+
     await User.findByIdAndUpdate(
       request.sender_id,
       { $addToSet: { connections: request.receiver_id } }
@@ -88,20 +124,28 @@ exports.acceptConnection = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      status: 'CONNECTED'
+      status: "CONNECTED"
     });
 
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
   }
 };
+
 
 /* ======================================================
    REJECT CONNECTION
 ====================================================== */
+
 exports.rejectConnection = async (req, res) => {
   try {
-    const { targetId, targetType = 'USER' } = req.body;
+
+    const { targetId, targetType = "USER" } = req.body;
     const receiverId = req.user.id;
 
     const request = await ConnectionRequest.findOneAndUpdate(
@@ -109,40 +153,49 @@ exports.rejectConnection = async (req, res) => {
         sender_id: targetId,
         receiver_id: receiverId,
         target_type: targetType,
-        status: 'pending'
+        status: "PENDING"
       },
-      { status: 'rejected' },
+      { status: "REJECTED" },
       { new: true }
     );
 
     if (!request) {
       return res.status(404).json({
         success: false,
-        message: 'No pending request found'
+        message: "No pending request found"
       });
     }
 
     return res.status(200).json({
       success: true,
-      status: 'REJECTED'
+      status: "REJECTED"
     });
 
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
   }
 };
 
 
-// controllers/connectionController.js
+/* ======================================================
+   CHECK IF PENDING CONNECTION EXISTS
+====================================================== */
+
 exports.getPendingConnection = async (req, res) => {
   try {
-    const { targetId, targetType = 'USER' } = req.query;
+
+    const { targetId, targetType = "USER" } = req.query;
     const userId = req.user.id;
 
     if (!targetId) {
       return res.status(400).json({
         success: false,
-        message: 'targetId is required'
+        message: "targetId is required"
       });
     }
 
@@ -150,33 +203,41 @@ exports.getPendingConnection = async (req, res) => {
       sender_id: userId,
       receiver_id: targetId,
       target_type: targetType,
-      status: 'pending'
+      status: "PENDING"
     });
 
     return res.status(200).json({
       success: true,
       exists: !!pending,
       requestId: pending ? pending._id : null,
-      status: pending ? pending.status : 'none'
+      status: pending ? pending.status : "NONE"
     });
 
   } catch (err) {
+
     return res.status(500).json({
       success: false,
       message: err.message
     });
+
   }
 };
 
+
+/* ======================================================
+   GET CONNECTION STATUS BETWEEN TWO USERS
+====================================================== */
+
 exports.getConnectionStatus = async (req, res) => {
   try {
-    const { targetId, targetType = 'USER' } = req.query;
+
+    const { targetId, targetType = "USER" } = req.query;
     const userId = req.user.id;
 
     if (!targetId) {
       return res.status(400).json({
         success: false,
-        message: 'targetId is required'
+        message: "targetId is required"
       });
     }
 
@@ -188,28 +249,32 @@ exports.getConnectionStatus = async (req, res) => {
       ]
     });
 
-    // No connection at all
+    /* ---------------- NO CONNECTION ---------------- */
+
     if (!request) {
       return res.json({
         success: true,
-        status: 'NONE'
+        status: "NONE"
       });
     }
 
-    // Accepted connection
-    if (request.status === 'accepted') {
+    /* ---------------- CONNECTED ---------------- */
+
+    if (request.status === "ACCEPTED") {
       return res.json({
         success: true,
-        status: 'CONNECTED'
+        status: "CONNECTED"
       });
     }
 
-    // Pending connection
-    if (request.status === 'pending') {
+    /* ---------------- PENDING ---------------- */
+
+    if (request.status === "PENDING") {
+
       const status =
         request.sender_id.toString() === userId
-          ? 'REQUEST_SENT'
-          : 'REQUEST_RECEIVED';
+          ? "REQUEST_SENT"
+          : "REQUEST_RECEIVED";
 
       return res.json({
         success: true,
@@ -218,18 +283,21 @@ exports.getConnectionStatus = async (req, res) => {
       });
     }
 
-    // Rejected
-    if (request.status === 'rejected') {
+    /* ---------------- REJECTED ---------------- */
+
+    if (request.status === "REJECTED") {
       return res.json({
         success: true,
-        status: 'REJECTED'
+        status: "REJECTED"
       });
     }
 
   } catch (err) {
+
     return res.status(500).json({
       success: false,
       message: err.message
     });
+
   }
 };

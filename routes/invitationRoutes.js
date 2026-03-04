@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect } = require("../middleware/authMiddleware");
 const invitationController = require("../controllers/invitationController");
 
+
 router.use(protect);
 
 /*
@@ -29,5 +30,18 @@ router.post(
 // router.get("/", invitationController.getMyInvitations);
 // router.get("/group/:groupId", invitationController.getGroupInvitations);
 // router.post("/join", invitationController.joinGroup);
+
+/*
+|--------------------------------------------------------------------------
+| GROUP INVITE (ADMIN → USER)
+|--------------------------------------------------------------------------
+| Admin invites a user to join the group
+*/
+
+
+router.post(
+  "/groups/:groupId/invite/bulk",
+  invitationController.bulkInviteUsersToGroup
+)
 
 module.exports = router;

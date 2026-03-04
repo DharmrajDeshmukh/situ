@@ -11,7 +11,7 @@ const userSchema = new mongoose.Schema({
   // Profile
   name: { type: String, trim: true },
   username: { type: String, unique: true, sparse: true, trim: true, lowercase: true },
-  bio: { type: String, maxLength: 200, default: "" },
+  bio: { type: String, maxLength: 1000, default: "" },
   college: { type: String, trim: true },
   profilePic: { type: String, default: "" },
 

@@ -563,7 +563,8 @@ const GroupMember = require("../models/GroupMember");
 const ProjectMember = require("../models/ProjectMember");
 const ChatRoom = require("../models/ChatRoom");
 const GroupCollabRequest = require("../models/GroupCollabRequest");
-
+const ConnectionRequest = require("../models/ConnectionRequest");
+const User = require("../models/User");
 /* =====================================================
    SEND INVITATION
    ===================================================== */
@@ -591,25 +592,30 @@ exports.sendInvitation = async (req, res) => {
     }
 
     // Prevent duplicate invite
-    const duplicate = await Invitation.findOne({
-      targetId,
-      invitedUserId,
-      status: { $in: ["PENDING", "ACCEPTED"] }
-    });
+   const duplicate = await Invitation.findOne({
+  invitedUserId,
+  groupId: targetType === "GROUP" ? targetId : groupId,
+  projectId: targetType === "PROJECT" ? targetId : null,
+  status: { $in: ["PENDING", "ACCEPTED"] }
+});
 
     if (duplicate) {
       return res.status(400).json({ success: false, message: "Invitation already exists" });
     }
 
-    const invitation = await Invitation.create({
-      type: targetType,
-      targetId,
-      groupId: targetType === "GROUP" ? targetId : groupId,
-      invitedUserId,
-      invitedBy: userId,
-      role: role || "MEMBER",
-      status: "PENDING"
-    });
+   const invitation = await Invitation.create({
+  type: targetType === "GROUP" ? "GROUP_INVITE" : "PROJECT_INVITE",
+
+  groupId: targetType === "GROUP" ? targetId : groupId,
+
+  projectId: targetType === "PROJECT" ? targetId : null,
+
+  invitedUserId,
+  invitedBy: userId,
+
+  role: role || "member",
+  status: "PENDING"
+});
 
     return res.json({
       success: true,
@@ -644,12 +650,12 @@ exports.acceptInvitation = async (req, res) => {
 
     /* ================= PROJECT INVITE ================= */
 
-    if (invitation.type === "PROJECT") {
+    if (invitation.type === "PROJECT_INVITE") {
 
       // Ensure user is group member
       const groupMember = await GroupMember.findOne({
         groupId: invitation.groupId,
-        user_id: userId
+        userId: userId
       });
 
       if (!groupMember) {
@@ -660,28 +666,28 @@ exports.acceptInvitation = async (req, res) => {
       }
 
       // Prevent duplicate ProjectMember
-      const existingProjectMember = await ProjectMember.findOne({
-        project_id: invitation.targetId,
-        user_id: userId
-      });
+     const existingProjectMember = await ProjectMember.findOne({
+  projectId: invitation.projectId,
+  userId: userId
+});
 
       if (!existingProjectMember) {
         await ProjectMember.create({
-          project_id: invitation.targetId,
-          user_id: userId,
-          role: invitation.role?.toUpperCase() || "MEMBER",
+  projectId: invitation.projectId,
+          userId: userId,
+          role: invitation.role?.toUpperCase() || "member",
           status: "ACCEPTED"
         });
       }
 
       // Add to project chat
       await ChatRoom.updateOne(
-        { projectId: invitation.targetId },
+        { projectId: invitation.projectId },
         {
           $addToSet: {
             members: {
               userId: userId,
-              role: invitation.role?.toUpperCase() || "MEMBER",
+              role: invitation.role?.toUpperCase() || "member",
               joinedAt: new Date()
             }
           }
@@ -699,29 +705,58 @@ exports.acceptInvitation = async (req, res) => {
 
     /* ================= GROUP INVITE ================= */
 
-    if (invitation.type === "GROUP") {
+  if (invitation.type === "GROUP_INVITE") {
 
-      const exists = await GroupMember.findOne({
-        groupId: invitation.groupId,
-        user_id: userId
-      });
+  const group = await Group.findById(invitation.groupId);
 
-      if (!exists) {
-        await GroupMember.create({
-          groupId: invitation.groupId,
-          user_id: userId,
-          role: invitation.role || "member"
-        });
+  if (!group) {
+    return res.status(404).json({
+      success: false,
+      message: "Group not found"
+    });
+  }
+
+  const exists = await GroupMember.findOne({
+    groupId: invitation.groupId,
+    userId: userId
+  });
+
+  if (!exists) {
+
+    // 1️⃣ Create GroupMember
+    await GroupMember.create({
+      groupId: invitation.groupId,
+      userId: userId,
+      role: invitation.role || "member"
+    });
+
+    // 2️⃣ Add to Group.members
+    group.members.addToSet(userId);
+    await group.save();
+
+    // 3️⃣ Add to community chat
+    await ChatRoom.updateMany(
+      { groupId: invitation.groupId },
+      {
+        $addToSet: {
+          members: {
+            userId: userId,
+            role: invitation.role || "member",
+            joinedAt: new Date()
+          }
+        }
       }
+    );
+  }
 
-      invitation.status = "ACCEPTED";
-      await invitation.save();
+  invitation.status = "ACCEPTED";
+  await invitation.save();
 
-      return res.json({
-        success: true,
-        message: "Joined group successfully"
-      });
-    }
+  return res.json({
+    success: true,
+    message: "Joined group successfully"
+  });
+}
 
     return res.json({ success: true });
 
@@ -787,7 +822,7 @@ exports.applyToGroup = async (req, res) => {
 
     const isMember = await GroupMember.exists({
       groupId: new mongoose.Types.ObjectId(groupId),
-      user_id: userId
+      userId: userId
     });
 
     if (isMember) {
@@ -824,5 +859,174 @@ exports.applyToGroup = async (req, res) => {
   } catch (err) {
     console.error("applyToGroup error:", err);
     return res.status(500).json({ error: err.message });
+  }
+};
+
+
+/* =====================================================
+   INVITE USER TO GROUP (ADMIN → USER)
+   ===================================================== */
+
+exports.inviteUserToGroup = async (req, res) => {
+  try {
+
+    const { groupId } = req.params;
+    const { userId } = req.body;
+    const inviterId = req.user._id || req.user.id;
+
+
+    
+    /* ---------------- CHECK GROUP ---------------- */
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: "Group not found"
+      });
+    }
+
+    /* ---------------- CHECK ADMIN ---------------- */
+
+    const admin = await GroupMember.findOne({
+  groupId,
+  userId: inviterId,
+  role: { $in: ["owner", "admin", "co_owner"] }
+});
+
+    if (!admin) {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can invite"
+      });
+    }
+
+    /* ---------------- CHECK USER ---------------- */
+
+    const targetUser = await User.findById(userId);
+
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    /* ---------------- CONNECTION CHECK ---------------- */
+
+   
+   const isConnected = await User.exists({
+  _id: inviterId,
+  connections: userId
+});
+
+  /* ---------------- SEND CONNECTION REQUEST IF NOT CONNECTED ---------------- */
+
+if (!isConnected) {
+
+  const existingConnection = await ConnectionRequest.findOne({
+    $or: [
+      { sender_id: inviterId, receiver_id: userId },
+      { sender_id: userId, receiver_id: inviterId }
+    ]
+  });
+
+  if (!existingConnection) {
+
+    await ConnectionRequest.create({
+      sender_id: inviterId,
+      receiver_id: userId,
+      target_type: "USER",
+      status: "PENDING"
+    });
+
+  }
+
+}
+   
+
+    /* ---------------- PREVENT DUPLICATE INVITE ---------------- */
+
+ const existingInvite = await Invitation.findOne({
+  groupId,
+  invitedUserId: userId,
+  status: { $in: ["PENDING","ACCEPTED"] }
+});
+
+    if (existingInvite) {
+      return res.status(409).json({
+        success: false,
+        message: "Invite already sent"
+      });
+    }
+
+    /* ---------------- CREATE INVITE ---------------- */
+
+    const invitation = await Invitation.create({
+      type: "GROUP_INVITE",
+      groupId,
+      invitedUserId: userId,
+      invitedBy: inviterId,
+      role: "member",
+      status: "PENDING"
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: isConnected
+        ? "User invited successfully"
+        : "User connected and invited successfully",
+      invitationId: invitation._id
+    });
+
+  } catch (err) {
+    console.error("inviteUserToGroup error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error"
+    });
+  }
+};
+
+exports.bulkInviteUsersToGroup = async (req, res) => {
+
+  try {
+
+    const { groupId } = req.params
+    const { userIds } = req.body
+    const inviterId = req.user._id || req.user.id
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "userIds required"
+      })
+    }
+
+    const invitations = userIds.map(userId => ({
+      type: "GROUP_INVITE",
+      groupId: groupId,
+      invitedUserId: userId,
+      invitedBy: inviterId,
+      role: "member",
+      status: "PENDING"
+    }))
+
+    await Invitation.insertMany(invitations)
+
+    return res.json({
+      success: true,
+      message: "Invites sent",
+      count: invitations.length
+    })
+
+  } catch (err) {
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    })
+
   }
 };

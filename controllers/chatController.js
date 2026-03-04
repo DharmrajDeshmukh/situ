@@ -339,6 +339,7 @@ exports.getChatHome = async (req, res) => {
       homeFeed.push({
         chatId: room._id.toString(),
         roomId: room._id.toString(),
+         groupId: group?._id?.toString() ?? null,
         directChatId: null,
         communityId: null,
         chatType: "DIRECT",
@@ -485,37 +486,51 @@ exports.getCommunityChatHome = async (req, res) => {
 
     /* ================= FETCH ROOMS ================= */
 
-   const rooms = await ChatRoom.find({
-  communityId: community._id,
-  $or: [
-    { type: "GROUP" },  // General rooms
-    {
-      type: "PROJECT",
-     "members.userId": userId
-    }
-  ]
-});
+    const rooms = await ChatRoom.find({
+      communityId: community._id,
+      $or: [
+        { type: "GROUP" }, // General room
+        {
+          type: "PROJECT",
+          "members.userId": userId
+        }
+      ]
+    });
 
     const chatFeed = [];
 
     for (const room of rooms) {
 
+      // 🔎 Get last message
       const lastMsg = await ChatMessage.findOne({
         roomId: room._id
       }).sort({ sentAt: -1 });
 
+      // 🔔 Count unread messages
+      const unreadCount = await ChatMessage.countDocuments({
+        roomId: room._id,
+        senderId: { $ne: userId },
+        readBy: { $ne: userId }
+      });
+
       chatFeed.push({
         chatId: room._id.toString(),
         roomId: room._id.toString(),
-        chatType: room.type, // ✅ IMPORTANT FIX
+        communityId: community._id.toString(),
+
+        chatType: room.type, // GROUP or PROJECT
         title: room.name,
 
+        lastMessageId: lastMsg?._id?.toString() ?? null,
         lastMessage: lastMsg?.cipherText ?? null,
         lastSenderId: lastMsg?.senderId?.toString() ?? null,
+        messageType: lastMsg?.messageType ?? "TEXT",
 
         sentAt: lastMsg
           ? new Date(lastMsg.sentAt).getTime()
-          : new Date(room.createdAt).getTime()
+          : new Date(room.createdAt).getTime(),
+
+        unreadCount
       });
     }
 
@@ -525,12 +540,15 @@ exports.getCommunityChatHome = async (req, res) => {
 
     return res.json({
       success: true,
-      communityId,
+      communityId: community._id.toString(),
       chats: chatFeed
     });
 
   } catch (err) {
     console.error("Community Chat Home Error:", err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
 };
