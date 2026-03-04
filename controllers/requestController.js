@@ -290,16 +290,30 @@ exports.inviteUserToGroup = async (req,res)=>{
         ]
       })
 
-      if (!existingConnection) {
+      let isConnected =
+  inviter.connections.some(id => id.toString() === userId);
 
-        await ConnectionRequest.create({
-          sender_id: inviterId,
-          receiver_id: userId,
-          target_type: "USER",
-          status: "PENDING"
-        })
+if (!isConnected) {
 
-      }
+  const existingConnection = await ConnectionRequest.findOne({
+    $or: [
+      { sender_id: inviterId, receiver_id: userId },
+      { sender_id: userId, receiver_id: inviterId }
+    ]
+  });
+
+  if (!existingConnection) {
+
+    await ConnectionRequest.create({
+      sender_id: inviterId,
+      receiver_id: userId,
+      target_type: "USER",
+      status: "PENDING"
+    });
+
+  }
+
+}
 
     }
 
