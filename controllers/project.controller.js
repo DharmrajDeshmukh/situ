@@ -3,6 +3,8 @@ const ProjectMember = require("../models/ProjectMember");
 const Group = require("../models/Group");
 const ChatRoom = require("../models/ChatRoom");
 const Post = require("../models/Post");
+const Request = require("../models/Request");
+
 
 /* =====================================================
    CREATE PROJECT
@@ -118,20 +120,50 @@ if (stage && allowedStages.includes(stage)) {
 
     /* ================= ADD INVITES ================= */
 
-    for (const invite of parsedInvites) {
-      if (!invite.userId) continue;
 
-      await ProjectMember.create({
-        project_id: project._id,
-        user_id: invite.userId,
-        role: invite.role || "MEMBER",
-        status: "INVITED"
-      });
-    }
+
+const allowedRoles = ["OWNER", "ADMIN", "MEMBER"];
+
+await Promise.all(
+  parsedInvites.map(async (invite) => {
+
+    if (!invite.userId) return;
+
+    if (invite.userId.toString() === userId.toString()) return;
+
+    const exists = await ProjectMember.findOne({
+      project_id: project._id,
+      user_id: invite.userId
+    });
+
+    if (exists) return;
+
+    const role = allowedRoles.includes(invite.role)
+      ? invite.role
+      : "MEMBER";
+
+    await ProjectMember.create({
+      project_id: project._id,
+      user_id: invite.userId,
+      role: role,
+      status: "INVITED"
+    });
+
+    await Request.create({
+      type: "PROJECT_INVITE",
+      senderId: userId,
+      receiverId: invite.userId,
+      projectId: project._id,
+      role: role,
+      status: "PENDING"
+    });
+
+  })
+);
 
     /* ================= CREATE PROJECT CHAT (IF LINKED TO GROUP) ================= */
 
-   if (group) {
+  if (group) {
 
   const chatMembers = [
     {
@@ -141,15 +173,32 @@ if (stage && allowedStages.includes(stage)) {
     }
   ];
 
-  // Add invited users to chat room members
+  const allowedRoles = ["OWNER", "ADMIN", "MEMBER"];
+
   for (const invite of parsedInvites) {
-    if (invite.userId) {
-      chatMembers.push({
-        userId: invite.userId,
-        role: invite.role || "MEMBER",
-        joinedAt: new Date()
-      });
-    }
+
+    // skip invalid
+    if (!invite.userId) continue;
+
+    // skip creator
+    if (invite.userId.toString() === userId.toString()) continue;
+
+    // prevent duplicate chat members
+    const alreadyAdded = chatMembers.some(
+      member => member.userId.toString() === invite.userId.toString()
+    );
+
+    if (alreadyAdded) continue;
+
+    const role = allowedRoles.includes(invite.role)
+      ? invite.role
+      : "MEMBER";
+
+    chatMembers.push({
+      userId: invite.userId,
+      role: role,
+      joinedAt: new Date()
+    });
   }
 
   const chatRoom = await ChatRoom.create({
@@ -164,6 +213,7 @@ if (stage && allowedStages.includes(stage)) {
   });
 
   project.chatRoomId = chatRoom._id;
+
   await project.save();
 }
     return res.status(201).json({

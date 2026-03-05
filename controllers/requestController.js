@@ -7,7 +7,7 @@ const Group = require("../models/Group")
 const GroupMember = require("../models/GroupMember")
 
 const ChatRoom = require("../models/ChatRoom")
-const ConnectionRequest = require("../models/ConnectionRequest");
+
 
 /* =====================================================
    GET MY REQUESTS
@@ -23,8 +23,9 @@ exports.getMyRequests = async (req,res)=>{
       receiverId:userId,
       status:{ $in:["PENDING","APPROVED"] }
     })
-    .populate("senderId","name profileImage")
-    .populate("groupId","name profileImage")
+    .populate("senderId","name profilePic")
+    .populate("groupId","name profilePic")
+    .populate("projectId","title banner_url")   // ✅ THIS WAS MISSING
     .sort({ createdAt:-1 })
     .lean()
 
@@ -272,66 +273,7 @@ exports.inviteUserToGroup = async (req,res)=>{
 
     }
 
-    /* ================= CHECK CONNECTION ================= */
-
-   /* ================= CHECK CONNECTION STATUS ================= */
-
-const inviter = await User.findById(inviterId).select("connections")
-
-let isConnected =
-  inviter.connections.some(id => id.toString() === userId)
-
-/* check existing connection request */
-
-const connection = await ConnectionRequest.findOne({
-  target_type: "USER",
-  $or: [
-    { sender_id: inviterId, receiver_id: userId },
-    { sender_id: userId, receiver_id: inviterId }
-  ]
-})
-
-if (!isConnected) {
-
-  if (connection) {
-
-    /* user2 already sent request → auto accept */
-
-    if (
-      connection.status === "PENDING" &&
-      connection.sender_id.toString() === userId
-    ) {
-
-      connection.status = "ACCEPTED"
-      await connection.save()
-
-      await User.findByIdAndUpdate(
-        inviterId,
-        { $addToSet: { connections: userId } }
-      )
-
-      await User.findByIdAndUpdate(
-        userId,
-        { $addToSet: { connections: inviterId } }
-      )
-
-      isConnected = true
-    }
-
-  } else {
-
-    /* send connection request */
-
-    await ConnectionRequest.create({
-      sender_id: inviterId,
-      receiver_id: userId,
-      target_type: "USER",
-      status: "PENDING"
-    })
-
-  }
-
-}
+   
 
     /* ================= ALREADY MEMBER CHECK ================= */
 
@@ -493,6 +435,35 @@ exports.acceptRequest = async (req,res)=>{
   })
 
 }
+
+if (request.type === "PROJECT_INVITE") {
+
+  const exists = await ProjectMember.findOne({
+    project_id: request.projectId,
+    user_id: userId
+  })
+
+  if (!exists) {
+
+    await ProjectMember.create({
+      project_id: request.projectId,
+      user_id: userId,
+      role: request.role || "MEMBER",
+      status: "ACCEPTED"
+    })
+
+  }
+
+  request.status = "ACCEPTED"
+  await request.save()
+
+  return res.json({
+    success:true,
+    message:"Joined project successfully"
+  })
+
+}
+
 
 
     /* ================= GROUP JOIN REQUEST ================= */
