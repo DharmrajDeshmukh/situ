@@ -438,12 +438,12 @@ exports.acceptRequest = async (req,res)=>{
 
 if (request.type === "PROJECT_INVITE") {
 
-  const exists = await ProjectMember.findOne({
+  const member = await ProjectMember.findOne({
     project_id: request.projectId,
     user_id: userId
   })
 
-  if (!exists) {
+  if (!member) {
 
     await ProjectMember.create({
       project_id: request.projectId,
@@ -452,14 +452,19 @@ if (request.type === "PROJECT_INVITE") {
       status: "ACCEPTED"
     })
 
+  } else {
+
+    member.status = "ACCEPTED"
+    await member.save()
+
   }
 
   request.status = "ACCEPTED"
   await request.save()
 
   return res.json({
-    success:true,
-    message:"Joined project successfully"
+    success: true,
+    message: "Joined project successfully"
   })
 
 }
