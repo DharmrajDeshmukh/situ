@@ -481,37 +481,51 @@ exports.verifyEmail = async (req, res) => {
 exports.refreshToken = async (req, res) => {
   try {
     const { refresh_token } = req.body;
-    if (!refresh_token) return res.status(401).json({ message: 'Token required' });
 
-    const [id, secret] = refresh_token.split('.');
+    if (!refresh_token)
+      return res.status(401).json({ message: "Token required" });
+
+    const [id, secret] = refresh_token.split(".");
     if (!id || !secret)
-      return res.status(401).json({ message: 'Invalid format' });
+      return res.status(401).json({ message: "Invalid format" });
 
     const tokenRecord = await RefreshToken.findById(id);
+
     if (!tokenRecord || tokenRecord.is_revoked)
-      return res.status(401).json({ message: 'Revoked token' });
+      return res.status(401).json({ message: "Revoked token" });
 
     const valid = await verifyHash(secret, tokenRecord.token_hash);
-    if (!valid) return res.status(401).json({ message: 'Invalid token' });
 
+    if (!valid)
+      return res.status(401).json({ message: "Invalid token" });
+
+    // revoke old token
     tokenRecord.is_revoked = true;
     await tokenRecord.save();
 
     const user = await User.findById(tokenRecord.user_id);
+
     const { accessToken, refreshToken: newSecret } = generateTokens(user);
 
-    const newDoc = await RefreshToken.create({
-      user_id: user._id,
-      token_hash: await hashData(newSecret)
-    });
+   const newDoc = await RefreshToken.create({
+  user_id: user._id,
+  token_hash: await hashData(newSecret),
+  device_id: tokenRecord.device_id
+});
 
     res.status(200).json({
       success: true,
       access_token: accessToken,
-      refresh_token: `${newDoc._id}.${newSecret}`
+      refresh_token: `${newDoc._id}.${newSecret}`,
+      access_token_expires_in: 600   // IMPORTANT
     });
-  } catch {
-    res.status(500).json({ success: false, message: 'Server error' });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Server error"
+    });
   }
 };
 

@@ -11,7 +11,7 @@ exports.generateTokens = (user) => {
   const accessToken = jwt.sign(
     { id: user._id, phone: user.phone, email: user.email },
     process.env.JWT_ACCESS_SECRET,
-    { expiresIn: '15m' }
+    { expiresIn: '10m' }
   );
   
   // Refresh token is just a random secure string, we hash it in DB

@@ -1,9 +1,9 @@
 require('dotenv').config();
 
 process.on("unhandledRejection", (error) => {
-  console.error("🔥 UNHANDLED REJECTION:");
-  console.error(error);
-  console.error(error?.stack);
+console.error("🔥 UNHANDLED REJECTION:");
+console.error(error);
+console.error(error?.stack);
 });
 
 const express = require('express');
@@ -11,35 +11,52 @@ const morgan = require('morgan');
 const helmet = require('helmet');
 const cors = require('cors');
 
+/* SOCKET IMPORTS */
+const http = require("http");
+const { Server } = require("socket.io");
+
 const app = express();
 app.set("trust proxy", 1);
+
 const authRoutes = require("./routes/authRoutes");
-app.use("/api/auth", authRoutes);
+
 
 const connectDB = require("./config/db");
 connectDB();
 
+/* CREATE HTTP SERVER */
+const server = http.createServer(app);
+
+/* CREATE SOCKET SERVER */
+const io = new Server(server, {
+cors: {
+origin: "*",
+methods: ["GET", "POST"]
+}
+});
+
+/* LOAD SOCKET HANDLER */
+require("./sockets/chatSocket")(io);
+
 app.get("/check", (req, res) => {
-  res.json({ status: "API WORKING PERFECTLY" });
+res.json({ status: "API WORKING PERFECTLY" });
 });
 
 app.use(
-  helmet({
-    contentSecurityPolicy: {
-      useDefaults: true,
-      directives: {
-        imgSrc: [
-          "'self'",
-          "data:",
-          "https://res.cloudinary.com",
-          "https:"
-        ],
-      },
-    },
-  })
+helmet({
+contentSecurityPolicy: {
+useDefaults: true,
+directives: {
+imgSrc: [
+"'self'",
+"data:",
+"https://res.cloudinary.com",
+"https:"
+],
+},
+},
+})
 );
-
-
 
 app.use(cors());
 app.use(morgan('dev'));
@@ -71,7 +88,6 @@ app.use(`${BASE_URL}/search`, require('./routes/searchRoutes'));
 // Chat
 app.use(BASE_URL, require('./routes/chatRoutes'));
 
-
 // Requests
 app.use(`${BASE_URL}/requests`, require('./routes/requestRoutes'));
 
@@ -85,16 +101,12 @@ app.use(BASE_URL, require('./routes/permissionRoutes'));
 const skillRoutes = require('./routes/skillroutes');
 app.use(`${BASE_URL}`, skillRoutes);
 
-// 🔥 ADD THESE BEFORE 404
-
 // Posts
 app.use(`${BASE_URL}`, require("./routes/postroute"));
 
 // Projects
 const projectRoutes = require("./routes/projectRoutes");
 app.use(`${BASE_URL}/projects`, projectRoutes);
-
-
 
 // Home Feed
 const homeRoutes = require("./routes/homeRoutes");
@@ -103,20 +115,17 @@ app.use(`${BASE_URL}/home`, homeRoutes);
 // Engagement
 app.use(`${BASE_URL}/engagement`, require('./routes/engagementRoutes'));
 
-
 // ---------------- 404 (ALWAYS LAST) ----------------
 app.use((req, res) =>
-  res.status(404).json({ success: false, message: 'Endpoint not found' })
+res.status(404).json({ success: false, message: 'Endpoint not found' })
 );
 
 const PORT = process.env.PORT || 5000;
 
 if (process.env.NODE_ENV !== "production") {
- app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
 });
 }
 
 module.exports = app;
-
-

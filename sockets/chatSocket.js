@@ -1,75 +1,106 @@
-const ChatMessage = require('../models/ChatMessage');
-const ChatRoom = require('../models/ChatRoom');
+const jwt = require("jsonwebtoken");
+const ChatMessage = require("../models/ChatMessage");
+const ChatRoom = require("../models/ChatRoom");
 
 /**
  * Socket Chat Handler
  * @param {import("socket.io").Server} io
  */
+
 module.exports = (io) => {
 
-  io.on("connection", (socket) => {
-    console.log("🟢 Socket connected:", socket.id);
+  /* =========================
+     SOCKET AUTH MIDDLEWARE
+  ========================= */
 
-    /**
-     * =========================
-     * JOIN ROOM
-     * =========================
-     */
+  io.use((socket, next) => {
+    try {
+      const token = socket.handshake.auth?.token;
+
+      if (!token) {
+        return next(new Error("Authentication error: token missing"));
+      }
+
+      const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+
+      socket.userId = decoded.user_id;
+      next();
+
+    } catch (err) {
+      console.log("❌ Socket auth failed:", err.message);
+      next(new Error("Authentication error"));
+    }
+  });
+
+  /* =========================
+     CONNECTION
+  ========================= */
+
+  io.on("connection", (socket) => {
+
+    console.log("🟢 Socket connected:", socket.id, "User:", socket.userId);
+
+    /* =========================
+       JOIN ROOM
+    ========================= */
+
     socket.on("join_room", async ({ roomId }) => {
       try {
+
         if (!roomId) {
           console.log("❌ join_room failed: roomId missing");
           return;
         }
 
-        // Optional safety check (recommended)
-        const roomExists = await ChatRoom.findById(roomId);
-        if (!roomExists) {
-          console.log("❌ join_room failed: room not found", roomId);
+        const room = await ChatRoom.findById(roomId);
+
+        if (!room) {
+          console.log("❌ join_room failed: room not found");
           return;
         }
 
         socket.join(roomId);
-        console.log(`✅ Socket ${socket.id} joined room ${roomId}`);
+
+        console.log(`✅ User ${socket.userId} joined room ${roomId}`);
 
       } catch (err) {
         console.error("❌ join_room error:", err.message);
       }
     });
 
-    /**
-     * =========================
-     * SEND MESSAGE
-     * =========================
-     */
-    socket.on("send_message", async (data) => {
+    /* =========================
+       SEND MESSAGE
+    ========================= */
+
+    socket.on("send_message", async (data, callback) => {
+
       try {
-        const { roomId, senderId, message, messageType = "TEXT", replyToMessageId = null } = data;
 
-        // 🔴 Validation
-        if (!roomId || !senderId || !message) {
-          console.log("❌ send_message failed: missing fields", data);
+        const { roomId, message, messageType = "TEXT", replyToMessageId = null } = data;
+
+        if (!roomId || !message) {
+          console.log("❌ send_message failed: invalid data");
           return;
         }
 
-        // 🔐 Optional: verify room exists
         const room = await ChatRoom.findById(roomId);
+
         if (!room) {
-          console.log("❌ send_message failed: room not found", roomId);
+          console.log("❌ send_message failed: room not found");
           return;
         }
 
-        // 💾 Save message to DB
+        /* Save message */
+
         const msg = await ChatMessage.create({
           roomId,
-          senderId,
+          senderId: socket.userId,
           cipherText: message,
           messageType,
           replyToMessageId
         });
 
-        // 📤 Emit to all users in room (including sender)
-        io.to(roomId).emit("receive_message", {
+        const payload = {
           _id: msg._id,
           roomId: msg.roomId,
           senderId: msg.senderId,
@@ -77,35 +108,76 @@ module.exports = (io) => {
           messageType: msg.messageType,
           replyToMessageId: msg.replyToMessageId,
           createdAt: msg.createdAt
-        });
+        };
 
-        console.log("📩 Message sent to room:", roomId);
+        /* Emit message to room */
+
+        io.to(roomId).emit("receive_message", payload);
+
+        /* Ack sender */
+
+        if (callback) {
+          callback({
+            success: true,
+            messageId: msg._id
+          });
+        }
+
+        console.log("📩 Message delivered:", msg._id);
 
       } catch (err) {
         console.error("❌ send_message error:", err.message);
       }
+
     });
 
-    /**
-     * =========================
-     * LEAVE ROOM (optional)
-     * =========================
-     */
+    /* =========================
+       TYPING INDICATOR
+    ========================= */
+
+    socket.on("typing", ({ roomId }) => {
+
+      socket.to(roomId).emit("user_typing", {
+        userId: socket.userId
+      });
+
+    });
+
+    /* =========================
+       STOP TYPING
+    ========================= */
+
+    socket.on("stop_typing", ({ roomId }) => {
+
+      socket.to(roomId).emit("user_stop_typing", {
+        userId: socket.userId
+      });
+
+    });
+
+    /* =========================
+       LEAVE ROOM
+    ========================= */
+
     socket.on("leave_room", ({ roomId }) => {
+
       if (roomId) {
         socket.leave(roomId);
-        console.log(`👋 Socket ${socket.id} left room ${roomId}`);
+        console.log(`👋 User ${socket.userId} left room ${roomId}`);
       }
+
     });
 
-    /**
-     * =========================
-     * DISCONNECT
-     * =========================
-     */
+    /* =========================
+       DISCONNECT
+    ========================= */
+
     socket.on("disconnect", () => {
-      console.log("🔴 Socket disconnected:", socket.id);
+
+      console.log("🔴 Socket disconnected:", socket.userId);
+
     });
 
   });
+
 };
