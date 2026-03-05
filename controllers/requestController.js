@@ -7,7 +7,7 @@ const Group = require("../models/Group")
 const GroupMember = require("../models/GroupMember")
 
 const ChatRoom = require("../models/ChatRoom")
-
+const ProjectMember = require("../models/ProjectMember")
 
 /* =====================================================
    GET MY REQUESTS
