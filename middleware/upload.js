@@ -1,44 +1,54 @@
 const multer = require("multer");
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
-const cloudinary = require("../config/cloudinary");
+const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const s3 = require("../config/s3");
 
 /* =====================================================
-   CLOUDINARY STORAGE CONFIG
-   ===================================================== */
+   MULTER MEMORY STORAGE
+===================================================== */
 
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: async (req, file) => {
+const storage = multer.memoryStorage();
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024
+  },
+  fileFilter: (req, file, cb) => {
 
     const isImage = file.mimetype.startsWith("image/");
     const isPdf = file.mimetype === "application/pdf";
 
     if (!isImage && !isPdf) {
-      throw new Error("Only IMAGE and PDF allowed");
+      return cb(new Error("Only IMAGE and PDF allowed"), false);
     }
 
-    return {
-      folder: "setu_app/posts", // Better structure
-      resource_type: isImage ? "image" : "raw",
-      allowed_formats: isImage
-        ? ["jpg", "jpeg", "png", "webp"]
-        : ["pdf"],
-      transformation: isImage
-        ? [{ width: 1200, crop: "limit" }]
-        : undefined
-    };
+    cb(null, true);
   }
 });
 
 /* =====================================================
-   MULTER CONFIG
-   ===================================================== */
+   S3 UPLOAD FUNCTION
+===================================================== */
 
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024 // 10MB default
-  }
-});
+const uploadToS3 = async (file) => {
+
+  const key = `setu_app/posts/${Date.now()}-${file.originalname}`;
+
+  const params = {
+    Bucket: process.env.AWS_BUCKET,
+    Key: key,
+    Body: file.buffer,
+    ContentType: file.mimetype
+  };
+
+  await s3.send(new PutObjectCommand(params));
+
+  return `https://${process.env.AWS_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+};
+
+/* =====================================================
+   EXPORTS
+===================================================== */
 
 module.exports = upload;
+module.exports.uploadToS3 = uploadToS3;
