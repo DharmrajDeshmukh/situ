@@ -379,12 +379,14 @@ exports.acceptRequest = async (req,res)=>{
 
     /* ================= GROUP INVITE ================= */
 
-  if (request.type === "GROUP_INVITE") {
+if (request.type === "GROUP_INVITE") {
 
   const exists = await GroupMember.findOne({
     groupId: request.groupId,
     userId
-  })
+  });
+
+  const group = await Group.findById(request.groupId);
 
   if (!exists) {
 
@@ -392,48 +394,59 @@ exports.acceptRequest = async (req,res)=>{
       groupId: request.groupId,
       userId,
       role: request.role || "member"
-    })
-
-    const group = await Group.findById(request.groupId)
+    });
 
     if (group) {
-      group.members.addToSet(userId)
-      await group.save()
+      group.members.addToSet(userId);
+      await group.save();
     }
+  }
 
-    const chatRoom = await ChatRoom.findOne({
-      groupId: request.groupId,
-      type: "GROUP"
-    })
+  /* ================= COMMUNITY MEMBERSHIP ================= */
 
-    if (chatRoom) {
+  if (group?.communityId) {
 
-      const already = chatRoom.members.some(
-        m => m.userId.toString() === userId
-      )
+    const community = await Community.findById(group.communityId);
 
-      if (!already) {
-
-        chatRoom.members.push({
-          userId,
-          role: "MEMBER"
-        })
-
-        await chatRoom.save()
-
-      }
+    if (community && !community.members.includes(userId)) {
+      community.members.push(userId);
+      await community.save();
     }
 
   }
 
-  request.status = "ACCEPTED"
-  await request.save()
+  /* ================= GENERAL CHAT ROOM ================= */
+
+  const chatRoom = await ChatRoom.findOne({
+    groupId: request.groupId,
+    type: "GROUP"
+  });
+
+  if (chatRoom) {
+
+    const already = chatRoom.members.some(
+      m => m.userId.toString() === userId
+    );
+
+    if (!already) {
+
+      chatRoom.members.push({
+        userId,
+        role: "MEMBER",
+        joinedAt: new Date()
+      });
+
+      await chatRoom.save();
+    }
+  }
+
+  request.status = "ACCEPTED";
+  await request.save();
 
   return res.json({
     success: true,
     message: "Joined group successfully"
-  })
-
+  });
 }
 
 if (request.type === "PROJECT_INVITE") {
@@ -441,7 +454,7 @@ if (request.type === "PROJECT_INVITE") {
   const member = await ProjectMember.findOne({
     project_id: request.projectId,
     user_id: userId
-  })
+  });
 
   if (!member) {
 
@@ -450,25 +463,71 @@ if (request.type === "PROJECT_INVITE") {
       user_id: userId,
       role: request.role || "MEMBER",
       status: "ACCEPTED"
-    })
+    });
 
   } else {
 
-    member.status = "ACCEPTED"
-    await member.save()
+    member.status = "ACCEPTED";
+    await member.save();
+  }
+
+  /* ================= GET PROJECT ================= */
+
+  const project = await Project.findById(request.projectId);
+
+  if (project?.group_id) {
+
+    const group = await Group.findById(project.group_id);
+
+    /* ================= COMMUNITY MEMBERSHIP ================= */
+
+    if (group?.communityId) {
+
+      const community = await Community.findById(group.communityId);
+
+      if (community && !community.members.includes(userId)) {
+        community.members.push(userId);
+        await community.save();
+      }
+
+    }
+
+    /* ================= PROJECT CHAT ROOM ================= */
+
+    const chatRoom = await ChatRoom.findOne({
+      projectId: project._id,
+      type: "PROJECT"
+    });
+
+    if (chatRoom) {
+
+      const exists = chatRoom.members.some(
+        m => m.userId.toString() === userId
+      );
+
+      if (!exists) {
+
+        chatRoom.members.push({
+          userId,
+          role: request.role || "MEMBER",
+          joinedAt: new Date()
+        });
+
+        await chatRoom.save();
+      }
+
+    }
 
   }
 
-  request.status = "ACCEPTED"
-  await request.save()
+  request.status = "ACCEPTED";
+  await request.save();
 
   return res.json({
     success: true,
     message: "Joined project successfully"
-  })
-
+  });
 }
-
 
 
     /* ================= GROUP JOIN REQUEST ================= */
