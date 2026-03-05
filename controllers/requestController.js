@@ -8,6 +8,8 @@ const GroupMember = require("../models/GroupMember")
 
 const ChatRoom = require("../models/ChatRoom")
 const ProjectMember = require("../models/ProjectMember")
+const Community = require("../models/Community")
+const Project = require("../models/Project")
 
 /* =====================================================
    GET MY REQUESTS
