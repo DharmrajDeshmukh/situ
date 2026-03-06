@@ -28,7 +28,7 @@ module.exports = (io) => {
 
     } catch (err) {
       console.log("❌ Socket auth failed:", err.message);
-      next(new Error("Authentication error"));
+      next(new Error(err.message));
     }
   });
 

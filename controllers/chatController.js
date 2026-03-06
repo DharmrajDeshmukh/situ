@@ -291,14 +291,14 @@ exports.markMessageRead = async (req, res) => {
 
     const { roomId } = req.params;
 
-    await ChatMessage.updateMany(
-      {
-        roomId,
-        senderId: { $ne: req.user.id },
-        readBy: { $ne: req.user.id }
-      },
-      { $addToSet: { readBy: req.user.id } }
-    );
+   await ChatMessage.updateMany(
+  {
+    roomId,
+    senderId: { $ne: req.user.id },
+    readBy: { $nin: [req.user.id] }
+  },
+  { $addToSet: { readBy: req.user.id } }
+);
 
     res.json({ success: true });
 
@@ -335,35 +335,35 @@ exports.getChatHome = async (req, res) => {
         roomId: room._id
       }).sort({ sentAt: -1 });
 
-      const unreadCount = await ChatMessage.countDocuments({
-        roomId: room._id,
-        senderId: { $ne: currentUserId },
-        readBy: { $ne: currentUserId }
-      });
+     const unreadCount = await ChatMessage.countDocuments({
+  roomId: room._id,
+  senderId: { $ne: userId },
+  readBy: { $nin: [userId] }
+});
 
-      homeFeed.push({
-        chatId: room._id.toString(),
-        roomId: room._id.toString(),
-         groupId: group?._id?.toString() ?? null,
-        directChatId: null,
-        communityId: null,
-        chatType: "DIRECT",
+    homeFeed.push({
+  chatId: room._id.toString(),
+  roomId: room._id.toString(),
+  groupId: null,
+  directChatId: null,
+  communityId: null,
+  chatType: "DIRECT",
 
-        title: otherUser.name,
-        avatarUrl: otherUser.profilePic ?? null, // ✅ FIXED
+  title: otherUser.name,
+  avatarUrl: otherUser.profilePic ?? null,
 
-        lastMessageId: lastMsg?._id?.toString() ?? "",
-        lastMessage: lastMsg?.cipherText ?? null,
-        lastSenderId: lastMsg?.senderId?.toString() ?? "",
-        messageType: lastMsg?.messageType ?? "TEXT",
+  lastMessageId: lastMsg?._id?.toString() ?? "",
+  lastMessage: lastMsg?.cipherText ?? null,
+  lastSenderId: lastMsg?.senderId?.toString() ?? "",
+  messageType: lastMsg?.messageType ?? "TEXT",
 
-        sentAt: lastMsg?.sentAt
-          ? new Date(lastMsg.sentAt).getTime()
-          : new Date(room.createdAt).getTime(),
+  sentAt: lastMsg?.sentAt
+    ? new Date(lastMsg.sentAt).getTime()
+    : new Date(room.createdAt).getTime(),
 
-        unreadCount,
-        isPinned: false
-      });
+  unreadCount,
+  isPinned: false
+});
     }
 
     /* ========= GROUP CHATS ========= */
@@ -398,7 +398,7 @@ exports.getChatHome = async (req, res) => {
         const unreadCount = await ChatMessage.countDocuments({
           roomId: room._id,
           senderId: { $ne: currentUserId },
-          readBy: { $ne: currentUserId }
+        "readBy.userId": { $nin: [currentUserId] }
         });
 
         homeFeed.push({
@@ -512,11 +512,11 @@ exports.getCommunityChatHome = async (req, res) => {
       }).sort({ sentAt: -1 });
 
       // 🔔 Count unread messages
-      const unreadCount = await ChatMessage.countDocuments({
-        roomId: room._id,
-        senderId: { $ne: userId },
-        readBy: { $ne: userId }
-      });
+     const unreadCount = await ChatMessage.countDocuments({
+  roomId: room._id,
+  senderId: { $ne: currentUserId },
+  "readBy.userId": { $nin: [currentUserId] }
+});
 
       chatFeed.push({
         chatId: room._id.toString(),
