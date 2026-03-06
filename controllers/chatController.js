@@ -286,20 +286,25 @@ exports.getDirectMessages = async (req, res) => { // [cite: 949]
 };
 
 // --- 7. STATE ---
-exports.markMessageRead = async (req, res) => { // [cite: 958]
+exports.markMessageRead = async (req, res) => {
   try {
-      const { messageIds } = req.body;
-      await ChatMessage.updateMany(
-  {
-    roomId,
-    senderId: { $ne: req.user.id },
-    readBy: { $ne: req.user.id }
-  },
-  { $addToSet: { readBy: req.user.id } }
-);
-;
-      res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+
+    const { roomId } = req.params;
+
+    await ChatMessage.updateMany(
+      {
+        roomId,
+        senderId: { $ne: req.user.id },
+        readBy: { $ne: req.user.id }
+      },
+      { $addToSet: { readBy: req.user.id } }
+    );
+
+    res.json({ success: true });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // controllers/chatController.js

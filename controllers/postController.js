@@ -28,25 +28,34 @@ exports.createPost = async (req, res) => {
     else if (groupId) finalVisibility = "GROUP";
 
     /* =======================
-       HANDLE CLOUDINARY FILES
+       HANDLE s3 FILES
        ======================= */
 
-    const files = req.files || [];
+   const files = req.files || [];
 
-    if (files.length > 10) {
-      return res.status(400).json({
-        success: false,
-        message: "Maximum 10 files allowed"
-      });
-    }
+if (files.length > 10) {
+  return res.status(400).json({
+    success: false,
+    message: "Maximum 10 files allowed"
+  });
+}
 
-    const media = files.map(file => ({
-      media_url: file.path,           // 🔥 Cloudinary secure URL
-      media_type: file.mimetype.startsWith("image/")
-        ? "IMAGE"
-        : "PDF",
-      size_in_bytes: file.size
-    }));
+const upload = require("../middleware/upload");
+
+const media = [];
+
+for (const file of files) {
+
+  const fileUrl = await upload.uploadToS3(file);
+
+  media.push({
+    media_url: fileUrl,
+    media_type: file.mimetype.startsWith("image/")
+      ? "IMAGE"
+      : "PDF",
+    size_in_bytes: file.size
+  });
+}
 
     const post = await Post.create({
       user_id: userId,

@@ -94,8 +94,14 @@ if (stage && allowedStages.includes(stage)) {
 
     /* ================= BANNER ================= */
 
-    const bannerUrl = req.file ? req.file.path : null;
+ /* ================= BANNER ================= */
 
+let bannerUrl = null;
+
+if (req.file) {
+  const upload = require("../middleware/upload");
+  bannerUrl = await upload.uploadToS3(req.file);
+}
     /* ================= CREATE PROJECT ================= */
 
   const project = await Project.create({
@@ -402,9 +408,9 @@ if (stage && allowedStages.includes(stage)) {
     if (deadline) updateData.deadline = deadline;
     if (visibility) updateData.visibility = visibility;
 
-    if (req.file) {
-      updateData.banner_url = req.file.path;
-    }
+   if (req.file) {
+  updateData.banner_url = await upload.uploadToS3(req.file)
+}
 
     await Project.findByIdAndUpdate(projectId, updateData);
 

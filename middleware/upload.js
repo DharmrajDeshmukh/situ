@@ -32,7 +32,13 @@ const upload = multer({
 
 const uploadToS3 = async (file) => {
 
-  const key = `setu_app/posts/${Date.now()}-${file.originalname}`;
+  // Determine extension safely
+  const ext = file.mimetype.split("/")[1] || "jpg";
+
+  // Generate unique filename
+  const key = `setu_app/posts/${Date.now()}-${Math.random()
+    .toString(36)
+    .substring(2, 8)}.${ext}`;
 
   const params = {
     Bucket: process.env.AWS_BUCKET,

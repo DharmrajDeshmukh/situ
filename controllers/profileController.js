@@ -301,6 +301,7 @@ const ProjectMember = require("../models/ProjectMember");
 const Project = require("../models/Project");
 const GroupMember = require("../models/GroupMember");
 const Post = require("../models/Post"); // if you have
+const upload = require("../middleware/upload");
 
 
 
@@ -656,6 +657,7 @@ exports.getInterestSuggestions = (req, res) => {
 // Matches: @POST("/project1/api/v1/profile/update-profile-picture")
 exports.updateProfilePicture = async (req, res) => {
   try {
+
     if (!req.file) {
       return res.status(400).json({
         success: false,
@@ -663,11 +665,10 @@ exports.updateProfilePicture = async (req, res) => {
       });
     }
 
-    // ✅ Cloudinary returns full hosted URL here
-    const imageUrl = req.file.path;
+    const imageUrl = await upload.uploadToS3(req.file);
 
-    // Optional: Get previous image (for future deletion logic)
     const user = await User.findById(req.user.id);
+
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -675,7 +676,6 @@ exports.updateProfilePicture = async (req, res) => {
       });
     }
 
-    // Update profile picture
     user.profilePic = imageUrl;
     await user.save();
 

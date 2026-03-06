@@ -312,6 +312,7 @@ const ChatRoom = require('../models/ChatRoom');
 const GroupMember = require('../models/GroupMember');
 const mongoose = require("mongoose");
 const Project = require("../models/Project");
+const upload = require("../middleware/upload");
 
 
 // Helper to determine User Role
@@ -602,11 +603,12 @@ exports.updateGroupDescription = async (req, res) => {
 // 8. UPDATE PROFILE IMAGE
 exports.updateGroupProfileImage = async (req, res) => {
   try {
+
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    const imageUrl = req.file.path; // ✅ Cloudinary URL
+   const imageUrl = await upload.uploadToS3(req.file);
 
     await Group.findByIdAndUpdate(req.params.group_id, {
       profile_image: imageUrl
@@ -623,12 +625,13 @@ exports.updateGroupProfileImage = async (req, res) => {
 // 9. UPDATE BANNER
 exports.updateGroupBanner = async (req, res) => {
   try {
+
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    const imageUrl = req.file.path; // ✅ Cloudinary URL
-
+   const imageUrl = await upload.uploadToS3(req.file);
+   
     await Group.findByIdAndUpdate(req.params.group_id, {
       banner_image: imageUrl
     });
