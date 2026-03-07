@@ -2,8 +2,7 @@ const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/groupController');
 const { protect } = require('../middleware/authMiddleware');
-const upload = require('../middleware/upload'); // ✅ Cloudinary upload middleware
-
+const upload = require("../middleware/upload");
 
 // Protect all routes
 router.use(protect);
