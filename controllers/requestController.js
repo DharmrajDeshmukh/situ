@@ -10,45 +10,80 @@ const ChatRoom = require("../models/ChatRoom")
 const ProjectMember = require("../models/ProjectMember")
 const Community = require("../models/Community")
 const Project = require("../models/Project")
+const ConnectionRequest = require("../models/ConnectionRequest")
 
 /* =====================================================
    GET MY REQUESTS
 ===================================================== */
 
-exports.getMyRequests = async (req,res)=>{
+exports.getMyRequests = async (req, res) => {
+  try {
 
-  try{
-
-    const userId = req.user.id
+    const userId = req.user.id;
 
     const requests = await Request.find({
-      receiverId:userId,
-      status:{ $in:["PENDING","APPROVED"] }
+      receiverId: userId,
+      status: { $in: ["PENDING", "APPROVED"] }
     })
-    .populate("senderId","name profilePic")
-    .populate("groupId","name profilePic")
-    .populate("projectId","title banner_url")   // ✅ THIS WAS MISSING
-    .sort({ createdAt:-1 })
-    .lean()
+    .populate("senderId", "name username profilePic")
+    .populate("groupId", "name profileImage")
+    .populate("projectId", "title banner_url")
+    .sort({ createdAt: -1 })
+    .lean();
+
+    const formattedRequests = requests.map(req => ({
+
+      requestId: req._id,
+
+      type: req.type,
+
+      sender: req.senderId ? {
+        id: req.senderId._id,
+        name: req.senderId.name,
+        username: req.senderId.username,
+        profilePic: req.senderId.profilePic || null
+      } : null,
+
+      group: req.groupId ? {
+        id: req.groupId._id,
+        name: req.groupId.name,
+        profilePic: req.groupId.profileImage || null
+      } : null,
+
+      project: req.projectId ? {
+        id: req.projectId._id,
+        title: req.projectId.title,
+        banner: req.projectId.banner_url || null
+      } : null,
+
+      role: req.role || null,
+
+      message: req.message || "",
+
+      status: req.status,
+
+      createdAt: req.createdAt
+
+    }));
+
 
     return res.json({
-      success:true,
-      requests
-    })
+      success: true,
+      count: formattedRequests.length,
+      requests: formattedRequests
+    });
 
-  }
-  catch(err){
+  } catch (err) {
 
-    console.error("getMyRequests error:",err)
+    console.error("getMyRequests error:", err);
 
     return res.status(500).json({
-      success:false,
-      message:"Server error"
-    })
+      success: false,
+      message: "Server error"
+    });
 
   }
-
-}
+};
 
 
 
@@ -62,14 +97,15 @@ exports.sendRequest = async (req,res)=>{
 
     const senderId = req.user.id
 
-    const {
-      receiverId,
-      groupId,
-      projectId,
-      type,
-      role,
-      message
-    } = req.body
+   const {
+  receiverId,
+  groupId,
+  projectId,
+  type,
+  role,
+  message,
+  skills
+} = req.body
 
 
     if (!type) {
@@ -128,18 +164,19 @@ exports.sendRequest = async (req,res)=>{
 
     /* ================= CREATE REQUEST ================= */
 
-    const request = await Request.create({
+   const request = await Request.create({
 
-      senderId,
-      receiverId,
-      groupId:groupId || null,
-      projectId:projectId || null,
-      type,
-      role:role || "member",
-      message:message || "",
-      status:"PENDING"
+  senderId,
+  receiverId,
+  groupId: groupId || null,
+  projectId: projectId || null,
+  type,
+  role: role || "member",
+  message: message || "",
+  skills: skills || [],
+  status: "PENDING"
 
-    })
+})
 
 
     return res.status(201).json({
@@ -212,12 +249,28 @@ exports.getGroupRequests = async (req,res)=>{
     .lean()
 
 
-    return res.json({
+   const formatted = requests.map(r => ({
 
-      success:true,
-      requests
+  requestId: r._id,
 
-    })
+  sender: {
+    id: r.senderId._id,
+    name: r.senderId.name,
+    profilePic: r.senderId.profileImage || null
+  },
+
+  message: r.message || "",
+
+  skills: r.skills || [],
+
+  createdAt: r.createdAt
+
+}))
+
+return res.json({
+  success: true,
+  requests: formatted
+})
 
 
   }
@@ -351,186 +404,135 @@ exports.inviteUserToGroup = async (req,res)=>{
    ACCEPT REQUEST
 ===================================================== */
 
-exports.acceptRequest = async (req,res)=>{
+exports.acceptRequest = async (req, res) => {
 
-  try{
+  try {
 
     const { requestId } = req.params
     const userId = req.user.id
 
-    const request = await Request.findById(requestId)
+    /* ================= CHECK NORMAL REQUEST ================= */
 
-    if (!request || request.status !== "PENDING") {
+    let request = await Request.findById(requestId)
 
-      return res.status(400).json({
-        success:false,
-        message:"Invalid request"
+    /* ================= CONNECTION REQUEST ================= */
+
+    if (!request) {
+
+      const connection = await ConnectionRequest.findById(requestId)
+
+      if (!connection || connection.status !== "PENDING") {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid request"
+        })
+      }
+
+      if (connection.receiver_id.toString() !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: "Unauthorized"
+        })
+      }
+
+      connection.status = "ACCEPTED"
+      await connection.save()
+
+      /* ===== CREATE MUTUAL CONNECTION ===== */
+
+      await User.findByIdAndUpdate(
+        connection.sender_id,
+        { $addToSet: { connections: connection.receiver_id } }
+      )
+
+      await User.findByIdAndUpdate(
+        connection.receiver_id,
+        { $addToSet: { connections: connection.sender_id } }
+      )
+
+      return res.json({
+        success: true,
+        message: "Users connected successfully"
       })
+    }
 
+    /* ================= NORMAL REQUEST ================= */
+
+    if (request.status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid request"
+      })
     }
 
     if (request.receiverId.toString() !== userId) {
-
       return res.status(403).json({
-        success:false,
-        message:"Unauthorized"
+        success: false,
+        message: "Unauthorized"
       })
-
     }
-
 
     /* ================= GROUP INVITE ================= */
 
-if (request.type === "GROUP_INVITE") {
+    if (request.type === "GROUP_INVITE") {
 
-  const exists = await GroupMember.findOne({
-    groupId: request.groupId,
-    userId
-  });
-
-  const group = await Group.findById(request.groupId);
-
-  if (!exists) {
-
-    await GroupMember.create({
-      groupId: request.groupId,
-      userId,
-      role: request.role || "member"
-    });
-
-    if (group) {
-      group.members.addToSet(userId);
-      await group.save();
-    }
-  }
-
-  /* ================= COMMUNITY MEMBERSHIP ================= */
-
-  if (group?.communityId) {
-
-    const community = await Community.findById(group.communityId);
-
-    if (community && !community.members.includes(userId)) {
-      community.members.push(userId);
-      await community.save();
-    }
-
-  }
-
-  /* ================= GENERAL CHAT ROOM ================= */
-
-  const chatRoom = await ChatRoom.findOne({
-    groupId: request.groupId,
-    type: "GROUP"
-  });
-
-  if (chatRoom) {
-
-    const already = chatRoom.members.some(
-      m => m.userId.toString() === userId
-    );
-
-    if (!already) {
-
-      chatRoom.members.push({
-        userId,
-        role: "MEMBER",
-        joinedAt: new Date()
-      });
-
-      await chatRoom.save();
-    }
-  }
-
-  request.status = "ACCEPTED";
-  await request.save();
-
-  return res.json({
-    success: true,
-    message: "Joined group successfully"
-  });
-}
-
-if (request.type === "PROJECT_INVITE") {
-
-  const member = await ProjectMember.findOne({
-    project_id: request.projectId,
-    user_id: userId
-  });
-
-  if (!member) {
-
-    await ProjectMember.create({
-      project_id: request.projectId,
-      user_id: userId,
-      role: request.role || "MEMBER",
-      status: "ACCEPTED"
-    });
-
-  } else {
-
-    member.status = "ACCEPTED";
-    await member.save();
-  }
-
-  /* ================= GET PROJECT ================= */
-
-  const project = await Project.findById(request.projectId);
-
-  if (project?.group_id) {
-
-    const group = await Group.findById(project.group_id);
-
-    /* ================= COMMUNITY MEMBERSHIP ================= */
-
-    if (group?.communityId) {
-
-      const community = await Community.findById(group.communityId);
-
-      if (community && !community.members.includes(userId)) {
-        community.members.push(userId);
-        await community.save();
-      }
-
-    }
-
-    /* ================= PROJECT CHAT ROOM ================= */
-
-    const chatRoom = await ChatRoom.findOne({
-      projectId: project._id,
-      type: "PROJECT"
-    });
-
-    if (chatRoom) {
-
-      const exists = chatRoom.members.some(
-        m => m.userId.toString() === userId
-      );
+      const exists = await GroupMember.findOne({
+        groupId: request.groupId,
+        userId
+      })
 
       if (!exists) {
 
-        chatRoom.members.push({
+        await GroupMember.create({
+          groupId: request.groupId,
           userId,
-          role: request.role || "MEMBER",
-          joinedAt: new Date()
-        });
+          role: request.role || "member"
+        })
 
-        await chatRoom.save();
+        const group = await Group.findById(request.groupId)
+
+        if (group) {
+          group.members.addToSet(userId)
+          await group.save()
+        }
       }
 
+      request.status = "ACCEPTED"
+      await request.save()
+
+      return res.json({
+        success: true,
+        message: "Joined group successfully"
+      })
     }
 
-  }
+    /* ================= PROJECT INVITE ================= */
 
-  request.status = "ACCEPTED";
-  await request.save();
+    if (request.type === "PROJECT_INVITE") {
 
-  return res.json({
-    success: true,
-    message: "Joined project successfully"
-  });
-}
+      const exists = await ProjectMember.findOne({
+        project_id: request.projectId,
+        user_id: userId
+      })
 
+      if (!exists) {
+
+        await ProjectMember.create({
+          project_id: request.projectId,
+          user_id: userId,
+          role: request.role || "MEMBER",
+          status: "ACCEPTED"
+        })
+      }
+
+      request.status = "ACCEPTED"
+      await request.save()
+
+      return res.json({
+        success: true,
+        message: "Joined project successfully"
+      })
+    }
 
     /* ================= GROUP JOIN REQUEST ================= */
 
@@ -540,12 +542,10 @@ if (request.type === "PROJECT_INVITE") {
       await request.save()
 
       return res.json({
-        success:true,
-        message:"User approved to join group"
+        success: true,
+        message: "User approved to join group"
       })
-
     }
-
 
     /* ================= DEFAULT ================= */
 
@@ -553,26 +553,23 @@ if (request.type === "PROJECT_INVITE") {
     await request.save()
 
     return res.json({
-      success:true,
-      message:"Request accepted"
+      success: true,
+      message: "Request accepted"
     })
 
-
   }
-  catch(err){
+  catch (err) {
 
-    console.error("acceptRequest error:",err)
+    console.error("acceptRequest error:", err)
 
     return res.status(500).json({
-      success:false,
-      message:"Server error"
+      success: false,
+      message: "Server error"
     })
 
   }
 
 }
-
-
 
 /* =====================================================
    REJECT REQUEST
@@ -845,6 +842,115 @@ exports.bulkInviteUsersToGroup = async (req, res) => {
   } catch (err) {
 
     console.error("bulkInviteUsersToGroup error:", err)
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error"
+    })
+
+  }
+
+}
+
+
+
+
+exports.getMyRequests = async (req, res) => {
+
+  try {
+
+    const userId = req.user.id
+
+    /* ================= NORMAL REQUESTS ================= */
+
+    const normalRequests = await Request.find({
+      receiverId: userId,
+      status: { $in: ["PENDING", "APPROVED"] }
+    })
+      .populate("senderId", "name username profilePic")
+      .populate("groupId", "name profileImage")
+      .populate("projectId", "title banner_url")
+      .lean()
+
+
+    const formattedNormal = normalRequests.map(r => ({
+
+      requestId: r._id,
+      type: r.type,
+
+      sender: r.senderId ? {
+        id: r.senderId._id,
+        name: r.senderId.name,
+        username: r.senderId.username,
+        profilePic: r.senderId.profilePic
+      } : null,
+
+      group: r.groupId ? {
+        id: r.groupId._id,
+        name: r.groupId.name,
+        profilePic: r.groupId.profileImage
+      } : null,
+
+      project: r.projectId ? {
+        id: r.projectId._id,
+        title: r.projectId.title,
+        banner: r.projectId.banner_url
+      } : null,
+
+      role: r.role || null,
+      status: r.status,
+      createdAt: r.createdAt
+
+    }))
+
+
+    /* ================= CONNECTION REQUESTS ================= */
+
+    const connectionRequests = await ConnectionRequest.find({
+      receiver_id: userId,
+      status: "PENDING"
+    })
+      .populate("sender_id", "name username profilePic")
+      .lean()
+
+
+    const formattedConnections = connectionRequests.map(r => ({
+
+      requestId: r._id,
+
+      type: "CONNECTION_REQUEST",
+
+      sender: {
+        id: r.sender_id._id,
+        name: r.sender_id.name,
+        username: r.sender_id.username,
+        profilePic: r.sender_id.profilePic
+      },
+
+      status: r.status,
+      createdAt: r.createdAt
+
+    }))
+
+
+    /* ================= MERGE BOTH ================= */
+
+    const allRequests = [
+      ...formattedNormal,
+      ...formattedConnections
+    ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+
+
+    return res.json({
+      success: true,
+      count: allRequests.length,
+      requests: allRequests
+    })
+
+  }
+  catch (err) {
+
+    console.error("getMyRequests error:", err)
 
     return res.status(500).json({
       success: false,

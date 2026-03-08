@@ -125,50 +125,110 @@ exports.closeGroupHiring = async (req, res) => {
    ===================================================== */
 exports.sendCollabRequest = async (req, res) => {
   try {
-    const { groupId } = req.params;
-    const { skills, message } = req.body;
 
-    const group = await Group.findById(groupId);
+    const { groupId } = req.params
+    const { skills, message } = req.body
+
+    /* =====================================================
+       1️⃣ CHECK GROUP
+    ===================================================== */
+
+    const group = await Group.findById(groupId)
+
     if (!group) {
       return res.status(404).json({
         success: false,
         message: "Group not found"
-      });
+      })
     }
 
-    if (!group.hiring?.isOpen) {
+    /* =====================================================
+       2️⃣ CHECK HIRING STATUS
+    ===================================================== */
+
+    if (!group.hiring || group.hiring.isOpen !== true) {
       return res.status(400).json({
         success: false,
         message: "Hiring is closed"
-      });
+      })
     }
 
-    // 🔥 IMPORTANT PART (THIS IS YOUR QUESTION)
-    const skill_id =
-      Array.isArray(skills) && skills.length > 0
-        ? skills[0]
-        : null;
+    /* =====================================================
+       3️⃣ CHECK IF USER ALREADY MEMBER
+    ===================================================== */
 
-    await GroupCollabRequest.create({
+    const isMember =
+      group.members?.includes(req.user.id) ||
+      group.owner_id.toString() === req.user.id ||
+      group.admins?.includes(req.user.id)
+
+    if (isMember) {
+      return res.status(400).json({
+        success: false,
+        message: "You are already a member of this group"
+      })
+    }
+
+    /* =====================================================
+       4️⃣ PREVENT DUPLICATE REQUEST
+    ===================================================== */
+
+    const existingRequest = await GroupCollabRequest.findOne({
       group_id: groupId,
       requester_id: req.user.id,
-      skill_id,     // ✅ null allowed
-      message
-    });
+      status: "PENDING"
+    })
 
-    res.status(200).json({
+    if (existingRequest) {
+      return res.status(400).json({
+        success: false,
+        message: "You already have a pending request"
+      })
+    }
+
+    /* =====================================================
+       5️⃣ SKILL HANDLING
+    ===================================================== */
+
+    let skill_id = null
+
+    if (Array.isArray(skills) && skills.length > 0) {
+      skill_id = skills[0]   // choose first skill
+    }
+
+    /* =====================================================
+       6️⃣ CREATE REQUEST
+    ===================================================== */
+
+    const request = await GroupCollabRequest.create({
+      group_id: groupId,
+      requester_id: req.user.id,
+      skill_id,
+      message: message || null,
+      status: "PENDING"
+    })
+
+    /* =====================================================
+       7️⃣ RESPONSE
+    ===================================================== */
+
+    return res.status(200).json({
       success: true,
-      message: "Request sent"
-    });
+      message: "Collaboration request sent",
+      requestId: request._id
+    })
 
   } catch (err) {
-    console.error("sendCollabRequest error:", err);
-    res.status(500).json({
+
+    console.error("sendCollabRequest error:", err)
+
+    return res.status(500).json({
       success: false,
       message: "Server error"
-    });
+    })
+
   }
-};
+}
 
 
 

@@ -88,29 +88,36 @@ exports.sendConnection = async (req, res) => {
 exports.acceptConnection = async (req, res) => {
   try {
 
-    const { targetId, targetType = "USER" } = req.body;
+    const requestId = req.params.requestId;
     const receiverId = req.user.id;
 
-    const request = await ConnectionRequest.findOne({
-      sender_id: targetId,
-      receiver_id: receiverId,
-      target_type: targetType,
-      status: "PENDING"
-    });
+    const request = await ConnectionRequest.findById(requestId);
 
     if (!request) {
       return res.status(404).json({
         success: false,
-        message: "No pending request found"
+        message: "Request not found"
       });
     }
 
-    /* ---------------- UPDATE STATUS ---------------- */
+    if (request.receiver_id.toString() !== receiverId) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized"
+      });
+    }
+
+    if (request.status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+        message: "Request already processed"
+      });
+    }
 
     request.status = "ACCEPTED";
     await request.save();
 
-    /* ---------------- MUTUAL CONNECTION ---------------- */
+    /* Mutual connection */
 
     await User.findByIdAndUpdate(
       request.sender_id,
@@ -122,14 +129,14 @@ exports.acceptConnection = async (req, res) => {
       { $addToSet: { connections: request.sender_id } }
     );
 
-    return res.status(200).json({
+    res.json({
       success: true,
       status: "CONNECTED"
     });
 
   } catch (err) {
 
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       message: err.message
     });
@@ -145,42 +152,42 @@ exports.acceptConnection = async (req, res) => {
 exports.rejectConnection = async (req, res) => {
   try {
 
-    const { targetId, targetType = "USER" } = req.body;
+    const requestId = req.params.requestId;
     const receiverId = req.user.id;
 
-    const request = await ConnectionRequest.findOneAndUpdate(
-      {
-        sender_id: targetId,
-        receiver_id: receiverId,
-        target_type: targetType,
-        status: "PENDING"
-      },
-      { status: "REJECTED" },
-      { new: true }
-    );
+    const request = await ConnectionRequest.findById(requestId);
 
     if (!request) {
       return res.status(404).json({
         success: false,
-        message: "No pending request found"
+        message: "Request not found"
       });
     }
 
-    return res.status(200).json({
+    if (request.receiver_id.toString() !== receiverId) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized"
+      });
+    }
+
+    request.status = "REJECTED";
+    await request.save();
+
+    res.json({
       success: true,
       status: "REJECTED"
     });
 
   } catch (err) {
 
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       message: err.message
     });
 
   }
 };
-
 
 /* ======================================================
    CHECK IF PENDING CONNECTION EXISTS

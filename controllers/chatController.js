@@ -289,16 +289,24 @@ exports.getDirectMessages = async (req, res) => { // [cite: 949]
 exports.markMessageRead = async (req, res) => {
   try {
 
-    const { roomId } = req.params;
+    const { roomId } = req.body;
+    const userId = req.user.id;
 
-   await ChatMessage.updateMany(
-  {
-    roomId,
-    senderId: { $ne: req.user.id },
-    readBy: { $nin: [req.user.id] }
-  },
-  { $addToSet: { readBy: req.user.id } }
-);
+    await ChatMessage.updateMany(
+      {
+        roomId,
+        senderId: { $ne: userId },
+        "readBy.userId": { $ne: userId }
+      },
+      {
+        $push: {
+          readBy: {
+            userId: userId,
+            readAt: new Date()
+          }
+        }
+      }
+    );
 
     res.json({ success: true });
 
@@ -335,10 +343,10 @@ exports.getChatHome = async (req, res) => {
         roomId: room._id
       }).sort({ sentAt: -1 });
 
-     const unreadCount = await ChatMessage.countDocuments({
+  const unreadCount = await ChatMessage.countDocuments({
   roomId: room._id,
-  senderId: { $ne: userId },
-  readBy: { $nin: [userId] }
+  senderId: { $ne: currentUserId },
+ "readBy.userId": { $ne: currentUserId }
 });
 
     homeFeed.push({
@@ -398,7 +406,7 @@ exports.getChatHome = async (req, res) => {
         const unreadCount = await ChatMessage.countDocuments({
           roomId: room._id,
           senderId: { $ne: currentUserId },
-        "readBy.userId": { $nin: [currentUserId] }
+        "readBy.userId": { $ne: currentUserId }
         });
 
         homeFeed.push({
@@ -512,10 +520,10 @@ exports.getCommunityChatHome = async (req, res) => {
       }).sort({ sentAt: -1 });
 
       // 🔔 Count unread messages
-     const unreadCount = await ChatMessage.countDocuments({
+    const unreadCount = await ChatMessage.countDocuments({
   roomId: room._id,
   senderId: { $ne: currentUserId },
-  "readBy.userId": { $nin: [currentUserId] }
+  "readBy.userId": { $ne: currentUserId }
 });
 
       chatFeed.push({

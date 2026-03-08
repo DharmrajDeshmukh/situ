@@ -69,6 +69,15 @@ const requestSchema = new mongoose.Schema(
   },
 
   /* ===============================
+     SKILLS (FOR COLLAB REQUESTS)
+  =============================== */
+
+  skills: {
+    type: [String],
+    default: []
+  },
+
+  /* ===============================
      REQUEST STATUS
   =============================== */
 

@@ -302,7 +302,7 @@ const Project = require("../models/Project");
 const GroupMember = require("../models/GroupMember");
 const Post = require("../models/Post"); // if you have
 const upload = require("../middleware/upload");
-
+const { getConnectionStatus } = require("../utils/getConnectionStatus")
 
 
 
@@ -477,9 +477,10 @@ const posts = standalonePosts.map(p => ({
       id: user._id,
       name: user.name,
       bio: user.bio,
-      profilePic: user.profilePic || null,
-      skills: user.skills || [],
-
+     profilePic: user.profilePic || null,
+college: user.college || "",
+skills: user.skills || [],
+interests: user.interests || [],
       stats: {
         no_of_followers: followersCount,
         no_of_connections: connectionsCount,
@@ -738,29 +739,12 @@ exports.getUserProfileView = async (req, res) => {
       });
     }
 
-    /* ================= CONNECTION STATUS ================= */
+   /* ================= CONNECTION STATUS ================= */
 
-    let connectionStatus = "NOT_CONNECTED";
-
-    const connection = await ConnectionRequest.findOne({
-      target_type: "USER",
-      $or: [
-        { sender_id: viewerId, receiver_id: targetUserId },
-        { sender_id: targetUserId, receiver_id: viewerId }
-      ]
-    });
-
-    if (connection) {
-      if (connection.status === "accepted") {
-        connectionStatus = "CONNECTED";
-      } else if (connection.status === "pending") {
-        connectionStatus =
-          connection.sender_id.toString() === viewerId
-            ? "REQUEST_SENT"
-            : "REQUEST_RECEIVED";
-      }
-    }
-
+const connectionStatus = await getConnectionStatus(
+  viewerId,
+  targetUserId
+);
     /* ================= FOLLOWERS / FOLLOWING ================= */
 
     const followersCount = user.followers ? user.followers.length : 0;
@@ -903,24 +887,65 @@ exports.getUserProfileView = async (req, res) => {
 
 // 14. Open Profile (Auto Redirect)
 // Matches: @GET("/project1/api/v1/profile/open/{userId}")
+
+
+
 exports.openUserProfile = async (req, res) => {
   try {
+
     const targetId = req.params.userId;
     const myId = req.user.id;
-    const type = (targetId === myId) ? "SELF" : "OTHER";
-    
-    const user = await User.findById(targetId);
-    
-    res.status(200).json({
-      profileType: type,
+
+    const profileType = targetId === myId ? "SELF" : "OTHER";
+
+    const user = await User.findById(targetId).select(
+      "_id username profilePic"
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    /* ================= CONNECTION STATUS ================= */
+
+    let connectionStatus = "NOT_CONNECTED";
+
+    if (profileType === "OTHER") {
+      connectionStatus = await getConnectionStatus(myId, targetId);
+    }
+
+    /* ================= RESPONSE ================= */
+
+    return res.status(200).json({
+      success: true,
+
+      profileType,
+
       user: {
         userId: user._id,
         username: user.username,
-        profileImage: user.profilePic
+        profileImage: user.profilePic || null
       },
-      connection: { status: "NOT_CONNECTED" } // Mock status
+
+      connection: {
+        status: connectionStatus
+      }
+
     });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+
+  } catch (err) {
+
+    console.error("openUserProfile error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
 };
 
 
