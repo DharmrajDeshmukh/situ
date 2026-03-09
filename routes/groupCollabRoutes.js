@@ -41,7 +41,7 @@ router.get(
 /* ================= ADMIN ================= */
 
 router.get(
-  '/:groupId/collab/requests/pending',
+  '/:groupId/collab/requests',
   groupCollabController.getPendingCollabRequests
 );
 

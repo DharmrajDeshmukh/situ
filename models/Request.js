@@ -13,7 +13,10 @@ const requestSchema = new mongoose.Schema(
       "GROUP_INVITE",
       "GROUP_JOIN_REQUEST",
       "PROJECT_INVITE",
-      "PROJECT_JOIN_REQUEST"
+      "PROJECT_JOIN_REQUEST",
+
+      /* 🔥 ADDED FOR GROUP COLLAB */
+      "GROUP_COLLAB"
     ],
     required: true
   },
@@ -31,7 +34,9 @@ const requestSchema = new mongoose.Schema(
   receiverId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
-    required: true
+
+    /* 🔥 CHANGED: allow null for collab requests */
+    default: null
   },
 
   /* ===============================

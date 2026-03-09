@@ -115,6 +115,9 @@ app.use(`${BASE_URL}/home`, homeRoutes);
 // Engagement
 app.use(`${BASE_URL}/engagement`, require('./routes/engagementRoutes'));
 
+// Follow
+app.use(`${BASE_URL}/follow`, require('./routes/followRoutes'));
+
 // ---------------- 404 (ALWAYS LAST) ----------------
 app.use((req, res) =>
 res.status(404).json({ success: false, message: 'Endpoint not found' })

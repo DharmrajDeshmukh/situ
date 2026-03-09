@@ -1,6 +1,8 @@
-const GroupCollabRequest = require('../models/GroupCollabRequest');
+const Request = require("../models/Request");
 const Group = require('../models/Group');
 const User = require('../models/User');
+const GroupMember = require("../models/GroupMember")
+const ChatRoom = require("../models/ChatRoom")
 // const Invitation = require('../models/Invitation'); // uncomment when ready
 
 /* =====================================================
@@ -68,9 +70,10 @@ exports.createOrUpdateHiringRequirement = async (req, res) => {
 exports.closeGroupHiring = async (req, res) => {
   try {
     const { groupId } = req.params;
-    const { rejectPending } = req.body; // 🔥 NEW FLAG
+    const { rejectPending } = req.body;
 
     const group = await Group.findById(groupId);
+
     if (!group) {
       return res.status(404).json({
         success: false,
@@ -78,7 +81,7 @@ exports.closeGroupHiring = async (req, res) => {
       });
     }
 
-    // 🔐 Permission check
+    // Permission check
     if (
       group.owner_id.toString() !== req.user.id &&
       !group.admins.includes(req.user.id)
@@ -89,32 +92,36 @@ exports.closeGroupHiring = async (req, res) => {
       });
     }
 
-    // 🔒 Close hiring
+    // Close hiring
     group.hiring.isOpen = false;
     group.hiring.updatedAt = new Date();
     await group.save();
 
-    // 🔥 OPTIONAL: Reject pending requests
+    /* DELETE ALL PENDING REQUESTS */
+
     if (rejectPending === true) {
-      await GroupCollabRequest.updateMany(
-        { group_id: groupId, status: "PENDING" },
-        { status: "REJECTED" }
-      );
+
+     await Request.deleteMany({
+  groupId: groupId,
+  type: "GROUP_COLLAB",
+  status: "PENDING"
+});
     }
 
     res.status(200).json({
       success: true,
       message: rejectPending
-        ? "Hiring closed and all pending requests rejected"
-        : "Hiring closed successfully",
-      rejectedPending: rejectPending === true
+        ? "Hiring closed and pending requests deleted"
+        : "Hiring closed successfully"
     });
 
   } catch (err) {
+
     res.status(500).json({
       success: false,
       message: err.message
     });
+
   }
 };
 
@@ -173,11 +180,12 @@ exports.sendCollabRequest = async (req, res) => {
        4️⃣ PREVENT DUPLICATE REQUEST
     ===================================================== */
 
-    const existingRequest = await GroupCollabRequest.findOne({
-      group_id: groupId,
-      requester_id: req.user.id,
-      status: "PENDING"
-    })
+const existingRequest = await Request.findOne({
+  groupId: groupId,
+  senderId: req.user.id,
+  type: "GROUP_COLLAB",
+  status: "PENDING"
+});
 
     if (existingRequest) {
       return res.status(400).json({
@@ -186,27 +194,22 @@ exports.sendCollabRequest = async (req, res) => {
       })
     }
 
-    /* =====================================================
-       5️⃣ SKILL HANDLING
-    ===================================================== */
 
-    let skill_id = null
-
-    if (Array.isArray(skills) && skills.length > 0) {
-      skill_id = skills[0]   // choose first skill
-    }
+    
 
     /* =====================================================
        6️⃣ CREATE REQUEST
     ===================================================== */
 
-    const request = await GroupCollabRequest.create({
-      group_id: groupId,
-      requester_id: req.user.id,
-      skill_id,
-      message: message || null,
-      status: "PENDING"
-    })
+ const request = await Request.create({
+  type: "GROUP_COLLAB",
+  senderId: req.user.id,
+  groupId: groupId,
+  role: "member",
+  skills: skills || [],
+  message: message || null,
+  status: "PENDING"
+});
 
     /* =====================================================
        7️⃣ RESPONSE
@@ -237,43 +240,74 @@ exports.sendCollabRequest = async (req, res) => {
    ===================================================== */
 exports.getPendingCollabRequests = async (req, res) => {
   try {
+
     const { groupId } = req.params;
 
-    const requests = await GroupCollabRequest
-      .find({ group_id: groupId, status: "PENDING" })
-      .populate("requester_id", "name username profile_image");
+ const requests = await Request.find({
+  groupId: groupId,
+  type: "GROUP_COLLAB",
+  status: "PENDING"
+})
+.populate("senderId", "name profile_image")
+.sort({ createdAt: -1 });
 
-    const list = requests.map(r => ({
-      requestId: r._id,
-      groupId: r.group_id,
-      requesterUserId: r.requester_id._id,
-      requesterName: r.requester_id.name,
-      requesterUsername: r.requester_id.username,
-      requesterProfileImage: r.requester_id.profile_image,
-      skillId: r.skill_id,
-      message: r.message,
-      status: r.status,
-      createdAt: r.created_at
-    }));
+  const list = requests.map(r => ({
+  requestId: r._id,
+  groupId: r.groupId,
 
-    res.status(200).json({ requests: list });
+  userId: r.senderId?._id || null,
+  userName: r.senderId?.name || "Unknown",
+  userProfileImage: r.senderId?.profile_image || null,
+
+  skills: r.skills || [],
+  message: r.message || null,
+
+  status: r.status,
+
+  createdAt: r.createdAt,
+  updatedAt: r.updatedAt || null
+}));
+
+    return res.status(200).json({
+      success: true,
+      requests: list
+    });
 
   } catch (err) {
-    res.status(500).json({ message: err.message });
+
+    console.error("getPendingCollabRequests error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load collaboration requests"
+    });
+
   }
 };
 
 /* =====================================================
    5. GET MY COLLAB REQUEST STATUS
    ===================================================== */
+
 exports.getMyCollabRequestStatus = async (req, res) => {
   try {
-    const { groupId } = req.params;
 
-    const request = await GroupCollabRequest.findOne({
-      group_id: groupId,
-      requester_id: req.user.id
-    }).sort({ created_at: -1 });
+    const { groupId } = req.params;
+    const userId = req.user.id;
+
+    /* ==============================
+       FIND LATEST COLLAB REQUEST
+    ============================== */
+
+    const request = await Request.findOne({
+      groupId: groupId,
+      senderId: userId,
+      type: "GROUP_COLLAB"
+    }).sort({ createdAt: -1 });
+
+    /* ==============================
+       IF NO REQUEST
+    ============================== */
 
     if (!request) {
       return res.status(200).json({
@@ -282,13 +316,24 @@ exports.getMyCollabRequestStatus = async (req, res) => {
       });
     }
 
-    res.status(200).json({
+    /* ==============================
+       RESPONSE
+    ============================== */
+
+    return res.status(200).json({
       requestId: request._id,
       status: request.status
     });
 
   } catch (err) {
-    res.status(500).json({ message: err.message });
+
+    console.error("getMyCollabRequestStatus error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error"
+    });
+
   }
 };
 
@@ -297,81 +342,74 @@ exports.getMyCollabRequestStatus = async (req, res) => {
    ===================================================== */
 exports.approveCollabRequest = async (req, res) => {
   try {
-    const { requestId } = req.params;
 
-    const request = await GroupCollabRequest.findById(requestId);
+    const { requestId } = req.params
+
+    const request = await Request.findById(requestId)
+
     if (!request) {
       return res.status(404).json({
-        success: false,
-        message: "Request not found"
-      });
+        success:false,
+        message:"Request not found"
+      })
     }
 
     if (request.status !== "PENDING") {
       return res.status(400).json({
-        success: false,
-        message: "Request already processed"
-      });
+        success:false,
+        message:"Request already processed"
+      })
     }
 
-    const group = await Group.findById(request.group_id);
+    const group = await Group.findById(request.groupId)
+
     if (!group) {
       return res.status(404).json({
-        success: false,
-        message: "Group not found"
-      });
+        success:false,
+        message:"Group not found"
+      })
     }
 
-    // 1️⃣ Add to GroupMember collection
-    const existingMember = await GroupMember.findOne({
-      groupId: group._id,
-      user_id: request.requester_id
-    });
+    /* APPROVE REQUEST */
 
-    if (!existingMember) {
-      await GroupMember.create({
-        groupId: group._id,
-        user_id: request.requester_id,
-        role: "member"
-      });
-    }
+    request.status = "APPROVED"
+    await request.save()
 
-    // 2️⃣ Add to Group.members array (if you still use this)
-    await Group.updateOne(
-      { _id: group._id },
-      { $addToSet: { members: request.requester_id } }
-    );
+    /* SEND GROUP INVITE */
 
-    // 3️⃣ Optional: Add to group chat
-    await ChatRoom.updateOne(
-      { groupId: group._id, type: "GROUP" },
-      {
-        $addToSet: {
-          members: {
-            userId: request.requester_id,
-            role: "MEMBER",
-            joinedAt: new Date()
-          }
-        }
-      }
-    );
+    await Request.create({
 
-    // 4️⃣ Mark request accepted
-    request.status = "ACCEPTED";
-    await request.save();
+      senderId: req.user.id,
+      receiverId: request.senderId,
+
+      groupId: request.groupId,
+
+      type: "GROUP_INVITE",
+      role: "member",
+
+      message: "Owner accepted your collaboration request. Join the group?",
+
+      status: "PENDING"
+
+    })
 
     return res.status(200).json({
-      success: true,
-      message: "User added to group successfully"
-    });
+      success:true,
+      message:"User approved. Invitation sent."
+    })
 
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
   }
-};
+  catch(err){
+
+    console.error("approveCollabRequest error:",err)
+
+    return res.status(500).json({
+      success:false,
+      message:"Server error"
+    })
+
+  }
+}
 
 
 /* =====================================================
@@ -381,7 +419,7 @@ exports.rejectCollabRequest = async (req, res) => {
   try {
     const { requestId } = req.params;
 
-    const request = await GroupCollabRequest.findById(requestId);
+  const request = await Request.findById(requestId);
     if (!request) {
       return res.status(404).json({
         success: false,
@@ -412,10 +450,11 @@ exports.rejectAllPendingCollabRequests = async (req, res) => {
   try {
     const { groupId } = req.params;
 
-    await GroupCollabRequest.updateMany(
-      { group_id: groupId, status: "PENDING" },
-      { status: "REJECTED" }
-    );
+  await Request.deleteMany({
+  groupId: groupId,
+  type: "GROUP_COLLAB",
+  status: "PENDING"
+});
 
     res.status(200).json({
       success: true,
