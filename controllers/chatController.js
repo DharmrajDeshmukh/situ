@@ -192,20 +192,41 @@ exports.getChatRooms = async (req, res) => {
 
 
 // --- 5. MESSAGING (Rooms) ---
-exports.sendRoomMessage = async (req, res) => { // [cite: 941]
+exports.sendRoomMessage = async (req, res) => {
   try {
+
     const { roomId } = req.params;
     const { cipherText, messageType, replyToMessageId } = req.body;
-    
+
     const msg = await ChatMessage.create({
-        roomId,
-        senderId: req.user.id,
-        cipherText,
-        messageType,
-        replyToMessageId
+      roomId,
+      senderId: req.user.id,
+      cipherText,
+      messageType,
+      replyToMessageId
     });
+
+    const payload = {
+      _id: msg._id,
+      roomId: msg.roomId,
+      senderId: msg.senderId,
+      cipherText: msg.cipherText,
+      messageType: msg.messageType,
+      replyToMessageId: msg.replyToMessageId,
+      createdAt: msg.createdAt
+    };
+
+    /* 🔥 REALTIME BROADCAST */
+    req.io.to(roomId).emit("receive_message", payload);
+
+    console.log("📡 Message broadcasted to room:", roomId);
+
     res.json(msg);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+
+  } catch (err) {
+    console.error("Send Room Message Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.getRoomMessages = async (req, res) => { // [cite: 937]
