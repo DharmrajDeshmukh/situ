@@ -38,6 +38,12 @@ methods: ["GET", "POST"]
 /* LOAD SOCKET HANDLER */
 require("./sockets/chatSocket")(io);
 
+/* MAKE SOCKET AVAILABLE IN ROUTES */
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
 app.get("/check", (req, res) => {
 res.json({ status: "API WORKING PERFECTLY" });
 });
@@ -125,10 +131,8 @@ res.status(404).json({ success: false, message: 'Endpoint not found' })
 
 const PORT = process.env.PORT || 5000;
 
-if (process.env.NODE_ENV !== "production") {
 server.listen(PORT, "0.0.0.0", () => {
-console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
+  console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
 });
-}
 
 module.exports = app;

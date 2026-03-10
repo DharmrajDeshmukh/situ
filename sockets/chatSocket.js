@@ -55,15 +55,22 @@ module.exports = (io) => {
       console.log("❌ join_room failed: roomId missing");
       return;
     }
-
-    const room = await ChatRoom.findById(roomId);
+const room = await ChatRoom.findOne({
+  _id: roomId,
+  $or: [
+    { "members.userId": socket.userId }, // direct chat
+    { createdBy: socket.userId }         // group/community rooms
+  ]
+});
 
     if (!room) {
       console.log("❌ join_room failed: room not found");
       return;
     }
 
-    socket.join(roomId);
+   if (!socket.rooms.has(roomId)) {
+  socket.join(roomId);
+}
 
     console.log(`✅ User ${socket.userId} joined room ${roomId}`);
     console.log("Current socket rooms:", socket.rooms);
@@ -100,31 +107,29 @@ module.exports = (io) => {
 
         /* Save message */
 
-        const msg = await ChatMessage.create({
-          roomId,
-          senderId: socket.userId,
-          cipherText: message,
-          messageType,
-          replyToMessageId
-        });
+      const msg = await ChatMessage.create({
+  roomId,
+  senderId: socket.userId,
+  cipherText: message,
+  messageType,
+  replyToMessageId
+});
 
-        const payload = {
-          _id: msg._id,
-          roomId: msg.roomId,
-          senderId: msg.senderId,
-          cipherText: msg.cipherText,
-          messageType: msg.messageType,
-          replyToMessageId: msg.replyToMessageId,
-          createdAt: msg.createdAt
-        };
+const payload = {
+  _id: msg._id,
+  roomId: msg.roomId,
+  senderId: msg.senderId,
+  cipherText: msg.cipherText,
+  messageType: msg.messageType,
+  replyToMessageId: msg.replyToMessageId,
+  createdAt: msg.createdAt
+};
 
-        /* Emit message to room */
+console.log("Emitting message to room:", roomId);
 
-    console.log("Emitting message to room:", roomId);
-console.log("Payload:", payload);
+socket.to(roomId).emit("receive_message", payload);
 
-io.to(roomId).emit("receive_message", payload);
-
+socket.to(roomId).emit("receive_message", payload);
         /* Ack sender */
 
         if (callback) {
