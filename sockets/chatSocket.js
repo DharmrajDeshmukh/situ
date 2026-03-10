@@ -23,7 +23,7 @@ module.exports = (io) => {
 
       const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
-      socket.userId = decoded.user_id;
+      socket.userId = decoded.user_id || decoded.id || decoded.userId;
       next();
 
     } catch (err) {
