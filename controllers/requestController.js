@@ -494,6 +494,31 @@ exports.acceptRequest = async (req, res) => {
         if (group) {
           group.members.addToSet(userId)
           await group.save()
+
+          /* ================= ADD TO GENERAL CHAT ================= */
+
+const chatRoom = await ChatRoom.findOne({
+  groupId: request.groupId,
+  type: "GROUP"
+})
+
+if (chatRoom) {
+
+  const exists = chatRoom.members.some(
+    m => m.userId.toString() === userId
+  )
+
+  if (!exists) {
+
+    chatRoom.members.push({
+      userId,
+      role: "MEMBER"
+    })
+
+    await chatRoom.save()
+
+  }
+}
         }
       }
 
@@ -707,11 +732,9 @@ exports.joinGroup = async (req,res)=>{
     /* ================= ADD TO CHAT ================= */
 
     const chatRoom = await ChatRoom.findOne({
-
-      groupId:request.groupId,
-      type:"GROUP"
-
-    })
+  communityId: group.communityId,
+  type: "GROUP"
+})
 
     if (chatRoom) {
 

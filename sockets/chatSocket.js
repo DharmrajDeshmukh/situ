@@ -44,35 +44,43 @@ module.exports = (io) => {
        JOIN ROOM
     ========================= */
 
-    socket.on("join_room", async ({ roomId }) => {
-      try {
+    socket.on("join_room", async (data) => {
+  try {
 
-        if (!roomId) {
-          console.log("❌ join_room failed: roomId missing");
-          return;
-        }
+    console.log("JOIN EVENT DATA:", data);
 
-        const room = await ChatRoom.findById(roomId);
+    const roomId = data.roomId;
 
-        if (!room) {
-          console.log("❌ join_room failed: room not found");
-          return;
-        }
+    if (!roomId) {
+      console.log("❌ join_room failed: roomId missing");
+      return;
+    }
 
-        socket.join(roomId);
+    const room = await ChatRoom.findById(roomId);
 
-        console.log(`✅ User ${socket.userId} joined room ${roomId}`);
+    if (!room) {
+      console.log("❌ join_room failed: room not found");
+      return;
+    }
 
-      } catch (err) {
-        console.error("❌ join_room error:", err.message);
-      }
-    });
+    socket.join(roomId);
+
+    console.log(`✅ User ${socket.userId} joined room ${roomId}`);
+    console.log("Current socket rooms:", socket.rooms);
+
+  } catch (err) {
+    console.error("❌ join_room error:", err.message);
+  }
+});
 
     /* =========================
        SEND MESSAGE
     ========================= */
 
-    socket.on("send_message", async (data, callback) => {
+   socket.on("send_message", async (data, callback) => {
+
+  console.log("SEND MESSAGE DATA:", data);
+  console.log("Socket rooms:", socket.rooms);
 
       try {
 
@@ -112,7 +120,10 @@ module.exports = (io) => {
 
         /* Emit message to room */
 
-        io.to(roomId).emit("receive_message", payload);
+    console.log("Emitting message to room:", roomId);
+console.log("Payload:", payload);
+
+io.to(roomId).emit("receive_message", payload);
 
         /* Ack sender */
 
