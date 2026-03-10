@@ -9,7 +9,17 @@ const User = require('../models/User');
 const ReadReceipt = require('../models/ReadReceipt');
 
 
-
+function getUnreadQuery(roomId, userId) {
+  return {
+    roomId,
+    senderId: { $ne: userId },
+    readBy: {
+      $not: {
+        $elemMatch: { userId: userId }
+      }
+    }
+  };
+}
 
 
 // --- 2. KEYS ---
@@ -210,7 +220,7 @@ exports.getRoomMessages = async (req, res) => { // [cite: 937]
     }
 
     const messages = await ChatMessage.find(query)
-        .sort({ sentAt: -1 }) // Newest first
+        .sort({ createdAt: -1 })// Newest first
         .limit(parseInt(limit));
         
     res.json({
@@ -221,11 +231,15 @@ exports.getRoomMessages = async (req, res) => { // [cite: 937]
 };
 
 // --- 6. DIRECT CHAT ---
-// --- 6. DIRECT CHAT (FIXED) ---
 exports.createDirectChat = async (req, res) => {
   try {
+
     const { userTwoId } = req.body;
-    const currentUserId = req.user.id;
+    const userOne = req.user.id;
+
+    /* ===============================
+       VALIDATION
+    =============================== */
 
     if (!userTwoId) {
       return res.status(400).json({
@@ -233,34 +247,82 @@ exports.createDirectChat = async (req, res) => {
       });
     }
 
-    // Sort user IDs to ensure uniqueness
-    const members = [currentUserId, userTwoId].sort();
-
-    // 🔍 Check if DIRECT chat room already exists
-    let room = await ChatRoom.findOne({
-      type: "DIRECT",
-      "members.userId": { $all: members }
-    });
-
-    // 🆕 Create room if not exists
-    if (!room) {
-      room = await ChatRoom.create({
-        type: "DIRECT",
-        members: members.map(userId => ({
-          userId,
-          role: "MEMBER"
-        })),
-        createdBy: currentUserId
+    if (userTwoId === userOne) {
+      return res.status(400).json({
+        error: "Cannot start chat with yourself"
       });
     }
 
+    /* ===============================
+       GENERATE UNIQUE PAIR KEY
+    =============================== */
+
+    const members = [userOne, userTwoId].sort();
+
+    const chatPairKey = members.join("_");
+
+    /* ===============================
+       CHECK EXISTING ROOM
+    =============================== */
+
+    let room = await ChatRoom.findOne({
+      type: "DIRECT",
+      chatPairKey
+    });
+
+    /* ===============================
+       CREATE ROOM IF NOT EXISTS
+    =============================== */
+
+    if (!room) {
+
+      try {
+
+        room = await ChatRoom.create({
+          type: "DIRECT",
+          chatPairKey,
+          members: members.map(id => ({
+            userId: id,
+            role: "MEMBER"
+          })),
+          createdBy: userOne
+        });
+
+      } catch (err) {
+
+        // Handle race condition (two users create chat at same time)
+        if (err.code === 11000) {
+
+          room = await ChatRoom.findOne({
+            type: "DIRECT",
+            chatPairKey
+          });
+
+        } else {
+          throw err;
+        }
+
+      }
+
+    }
+
+    /* ===============================
+       RESPONSE
+    =============================== */
+
     res.json({
-      roomId: room._id.toString() // ✅ frontend expects roomId
+      success: true,
+      roomId: room._id.toString()
     });
 
   } catch (err) {
+
     console.error("Direct Chat Error:", err);
-    res.status(500).json({ error: err.message });
+
+    res.status(500).json({
+      error: err.message
+    });
+
   }
 };
 
@@ -271,11 +333,11 @@ exports.getDirectMessages = async (req, res) => { // [cite: 949]
     const { chatId } = req.params;
     const { cursor, limit = 30 } = req.query;
     
-    const query = { directChatId: chatId };
+    const query = { roomId: chatId };
     if (cursor) query._id = { $lt: cursor };
 
     const messages = await ChatMessage.find(query)
-        .sort({ sentAt: -1 })
+        .sort({ createdAt: -1 })
         .limit(parseInt(limit));
 
     res.json({
@@ -288,7 +350,6 @@ exports.getDirectMessages = async (req, res) => { // [cite: 949]
 // --- 7. STATE ---
 exports.markMessageRead = async (req, res) => {
   try {
-
     const { roomId } = req.body;
     const userId = req.user.id;
 
@@ -296,12 +357,14 @@ exports.markMessageRead = async (req, res) => {
       {
         roomId,
         senderId: { $ne: userId },
-        "readBy.userId": { $ne: userId }
+        readBy: {
+          $not: { $elemMatch: { userId } }
+        }
       },
       {
         $push: {
           readBy: {
-            userId: userId,
+            userId,
             readAt: new Date()
           }
         }
@@ -319,128 +382,61 @@ exports.markMessageRead = async (req, res) => {
 
 exports.getChatHome = async (req, res) => {
   try {
-    const currentUserId = req.user.id;
-    const homeFeed = [];
 
-    /* ========= DIRECT CHATS ========= */
+    const userId = req.user.id;
+    const homeFeed = [];
 
     const directRooms = await ChatRoom.find({
       type: "DIRECT",
-      "members.userId": currentUserId
+      "members.userId": userId
     }).populate("members.userId", "name profilePic");
 
     for (const room of directRooms) {
 
       const otherMember = room.members.find(
-        m => m.userId && m.userId._id.toString() !== currentUserId
+        m => m.userId && m.userId._id.toString() !== userId
       );
 
       if (!otherMember) continue;
 
       const otherUser = otherMember.userId;
 
-      const lastMsg = await ChatMessage.findOne({
-        roomId: room._id
-      }).sort({ sentAt: -1 });
+      const lastMsg = await ChatMessage.findOne({ roomId: room._id })
+        .sort({ createdAt: -1 });
 
-  const unreadCount = await ChatMessage.countDocuments({
-  roomId: room._id,
-  senderId: { $ne: currentUserId },
- "readBy.userId": { $ne: currentUserId }
-});
+      const unreadCount = await ChatMessage.countDocuments(
+        getUnreadQuery(room._id, userId)
+      );
 
-    homeFeed.push({
-  chatId: room._id.toString(),
-  roomId: room._id.toString(),
-  groupId: null,
-  directChatId: null,
-  communityId: null,
-  chatType: "DIRECT",
+      homeFeed.push({
+        chatId: room._id.toString(),
+        roomId: room._id.toString(),
+        chatType: "DIRECT",
 
-  title: otherUser.name,
-  avatarUrl: otherUser.profilePic ?? null,
+        title: otherUser?.name || "User",
+        avatarUrl: otherUser?.profilePic || null,
 
-  lastMessageId: lastMsg?._id?.toString() ?? "",
-  lastMessage: lastMsg?.cipherText ?? null,
-  lastSenderId: lastMsg?.senderId?.toString() ?? "",
-  messageType: lastMsg?.messageType ?? "TEXT",
+        lastMessageId: lastMsg?._id?.toString() || "",
+        lastMessage: lastMsg?.cipherText || null,
+        lastSenderId: lastMsg?.senderId?.toString() || "",
+        messageType: lastMsg?.messageType || "TEXT",
 
-  sentAt: lastMsg?.sentAt
-    ? new Date(lastMsg.sentAt).getTime()
-    : new Date(room.createdAt).getTime(),
+        sentAt: lastMsg
+          ? new Date(lastMsg.createdAt).getTime()
+          : new Date(room.createdAt).getTime(),
 
-  unreadCount,
-  isPinned: false
-});
-    }
-
-    /* ========= GROUP CHATS ========= */
-
-    const communities = await Community.find({
-      members: currentUserId
-    });
-
-    for (const community of communities) {
-
-      const group = await Group.findOne({
-        communityId: community._id
+        unreadCount,
+        isPinned: false
       });
-
-   const rooms = await ChatRoom.find({
-  communityId: community._id,
-  $or: [
-    { type: "GROUP" },  // General rooms
-    {
-      type: "PROJECT",
-      "members.userId": currentUserId
-    }
-  ]
-});
-
-      for (const room of rooms) {
-
-        const lastMsg = await ChatMessage.findOne({
-          roomId: room._id
-        }).sort({ sentAt: -1 });
-
-        const unreadCount = await ChatMessage.countDocuments({
-          roomId: room._id,
-          senderId: { $ne: currentUserId },
-        "readBy.userId": { $ne: currentUserId }
-        });
-
-        homeFeed.push({
-          chatId: room._id.toString(),
-          roomId: room._id.toString(),
-          communityId: community._id.toString(),
-          directChatId: null,
-          chatType: "GROUP",
-
-          title: `${group?.name ?? community.name} - ${room.name}`,
-          avatarUrl: group?.profile_image ?? null, // ✅ FIXED
-
-          lastMessageId: lastMsg?._id?.toString() ?? "",
-          lastMessage: lastMsg?.cipherText ?? null,
-          lastSenderId: lastMsg?.senderId?.toString() ?? "",
-          messageType: lastMsg?.messageType ?? "TEXT",
-
-          sentAt: lastMsg?.sentAt
-            ? new Date(lastMsg.sentAt).getTime()
-            : new Date(room.createdAt).getTime(),
-
-          unreadCount,
-          isPinned: false
-        });
-      }
     }
 
-    homeFeed.sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
-
-    res.json(homeFeed);
+    res.json(homeFeed.sort((a, b) => b.sentAt - a.sentAt));
 
   } catch (err) {
+
     console.error("Chat Home Error:", err);
     res.status(500).json({ error: err.message });
+
   }
 };
 
@@ -479,11 +475,11 @@ exports.getRoomReadState = async (req, res) => {
 };
 
 exports.getCommunityChatHome = async (req, res) => {
+
   try {
+
     const { communityId } = req.params;
     const userId = req.user.id;
-
-    /* ================= MEMBERSHIP CHECK ================= */
 
     const community = await Community.findOne({
       _id: communityId,
@@ -497,12 +493,10 @@ exports.getCommunityChatHome = async (req, res) => {
       });
     }
 
-    /* ================= FETCH ROOMS ================= */
-
     const rooms = await ChatRoom.find({
-      communityId: community._id,
+      communityId,
       $or: [
-        { type: "GROUP" }, // General room
+        { type: "GROUP" },
         {
           type: "PROJECT",
           "members.userId": userId
@@ -514,54 +508,52 @@ exports.getCommunityChatHome = async (req, res) => {
 
     for (const room of rooms) {
 
-      // 🔎 Get last message
       const lastMsg = await ChatMessage.findOne({
         roomId: room._id
-      }).sort({ sentAt: -1 });
+      }).sort({ createdAt: -1 });
 
-      // 🔔 Count unread messages
-    const unreadCount = await ChatMessage.countDocuments({
-  roomId: room._id,
-  senderId: { $ne: currentUserId },
-  "readBy.userId": { $ne: currentUserId }
-});
+      const unreadCount = await ChatMessage.countDocuments(
+        getUnreadQuery(room._id, userId)
+      );
 
       chatFeed.push({
         chatId: room._id.toString(),
         roomId: room._id.toString(),
-        communityId: community._id.toString(),
+        communityId,
 
-        chatType: room.type, // GROUP or PROJECT
+        chatType: room.type,
         title: room.name,
 
-        lastMessageId: lastMsg?._id?.toString() ?? null,
-        lastMessage: lastMsg?.cipherText ?? null,
-        lastSenderId: lastMsg?.senderId?.toString() ?? null,
-        messageType: lastMsg?.messageType ?? "TEXT",
+        lastMessageId: lastMsg?._id?.toString() || null,
+        lastMessage: lastMsg?.cipherText || null,
+        lastSenderId: lastMsg?.senderId?.toString() || null,
+        messageType: lastMsg?.messageType || "TEXT",
 
         sentAt: lastMsg
-          ? new Date(lastMsg.sentAt).getTime()
+          ? new Date(lastMsg.createdAt).getTime()
           : new Date(room.createdAt).getTime(),
 
         unreadCount
       });
     }
 
-    /* ================= SORT BY LATEST ================= */
+    chatFeed.sort((a, b) => b.sentAt - a.sentAt);
 
-    chatFeed.sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
-
-    return res.json({
+    res.json({
       success: true,
-      communityId: community._id.toString(),
+      communityId,
       chats: chatFeed
     });
 
   } catch (err) {
+
     console.error("Community Chat Home Error:", err);
-    return res.status(500).json({
+
+    res.status(500).json({
       success: false,
       error: err.message
     });
+
   }
+
 };

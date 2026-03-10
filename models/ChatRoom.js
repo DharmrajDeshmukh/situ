@@ -1,29 +1,33 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 const chatRoomSchema = new mongoose.Schema({
+
   type: {
     type: String,
-    enum: ['COMMUNITY', 'GROUP', 'PROJECT', 'DIRECT'], // ✅ Added PROJECT
+    enum: ["COMMUNITY", "GROUP", "PROJECT", "DIRECT"],
     required: true
+  },
+
+  chatPairKey: {
+    type: String,
+    sparse: true
   },
 
   communityId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Community',
-    default: null,
-    index: true
+    ref: "Community",
+    default: null
   },
 
   groupId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Group',
-    default: null,
-    index: true
+    ref: "Group",
+    default: null
   },
 
-  projectId: {                                  // ✅ Added
+  projectId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Project',
+    ref: "Project",
     default: null
   },
 
@@ -42,37 +46,51 @@ const chatRoomSchema = new mongoose.Schema({
     default: true
   },
 
-  members: [{
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    role: {
-      type: String,
-      enum: ['OWNER', 'ADMIN', 'MEMBER'],
-      default: 'MEMBER'
-    },
-    joinedAt: {
-      type: Date,
-      default: Date.now
+  members: [
+    {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      },
+
+      role: {
+        type: String,
+        enum: ["OWNER", "ADMIN", "MEMBER"],
+        default: "MEMBER"
+      },
+
+      joinedAt: {
+        type: Date,
+        default: Date.now
+      }
     }
-  }],
+  ],
 
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: "User",
     required: true
   }
 
 }, { timestamps: true });
 
-/* 🔥 CRITICAL INDEX FOR DIRECT CHAT */
-chatRoomSchema.index(
-  { type: 1, "members.userId": 1 },
-  { unique: true, partialFilterExpression: { type: "DIRECT" } }
-);
 
-/* 🔥 PROJECT CHAT FAST QUERY */
+/* INDEXES */
+
+chatRoomSchema.index({ communityId: 1 });
+
+chatRoomSchema.index({ groupId: 1 });
+
 chatRoomSchema.index({ projectId: 1 });
 
-module.exports = mongoose.model('ChatRoom', chatRoomSchema);
+chatRoomSchema.index({ "members.userId": 1 });
+
+chatRoomSchema.index(
+  { type: 1, chatPairKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { type: "DIRECT" }
+  }
+);
+
+module.exports = mongoose.model("ChatRoom", chatRoomSchema);
